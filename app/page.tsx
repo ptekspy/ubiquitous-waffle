@@ -10,7 +10,7 @@ import { Hero } from "@/components/hero";
 import { ManualImportCard } from "@/components/manual-import-card";
 import { ScanSetupCard } from "@/components/scan-setup-card";
 import { UserMenu } from "@/components/user-menu";
-import { fetchPublicAnalysis, importBrowserPayload } from "@/lib/api/client";
+import { fetchPublicAnalysis, fetchWorkspace, importBrowserPayload, saveWorkspaceRedditUsername } from "@/lib/api/client";
 import { sendExtensionMessage } from "@/lib/extension/client";
 import type { ExtensionPingResponse, ExtensionScanResponse, ExtensionState, LoadState } from "@/lib/extension/types";
 import type { AnalyzeResponse } from "@/lib/types";
@@ -18,9 +18,18 @@ import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
 import { normaliseRedditUsername } from "@/utils/normalise-reddit-username";
 
 export default function Home() {
+  return (
+    <AuthGate>
+      <AuthenticatedDashboard />
+    </AuthGate>
+  );
+}
+
+function AuthenticatedDashboard() {
   const [username, setUsername] = useState("");
   const [importPayload, setImportPayload] = useState("");
   const [state, setState] = useState<LoadState>("idle");
+  const [workspaceState, setWorkspaceState] = useState<LoadState>("loading");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyzeResponse | null>(null);
   const [extensionState, setExtensionState] = useState<ExtensionState>("checking");
@@ -29,7 +38,41 @@ export default function Home() {
 
   useEffect(() => {
     void checkExtension();
+    void loadWorkspace();
   }, []);
+
+  async function loadWorkspace() {
+    setWorkspaceState("loading");
+
+    const result = await fetchWorkspace();
+    if (!result.ok) {
+      setWorkspaceState("error");
+      setError(result.error);
+      return;
+    }
+
+    const savedUsername = result.data.settings.redditUsername;
+    if (savedUsername) setUsername(savedUsername);
+
+    if (result.data.latest) {
+      setData(result.data.latest);
+      setState("loaded");
+    } else {
+      setState("idle");
+    }
+
+    setWorkspaceState("loaded");
+  }
+
+  async function rememberUsername(normalisedUsername: string) {
+    const result = await saveWorkspaceRedditUsername(normalisedUsername);
+    if (result.ok) {
+      setUsername(result.data.settings.redditUsername ?? normalisedUsername);
+      return;
+    }
+
+    setError(result.error);
+  }
 
   async function checkExtension() {
     setExtensionState("checking");
@@ -66,6 +109,7 @@ export default function Home() {
     }
 
     setData(result.data);
+    setUsername(result.data.profile.username);
     setState("loaded");
     return true;
   }
@@ -80,6 +124,7 @@ export default function Home() {
 
     setState("loading");
     setError(null);
+    await rememberUsername(normalisedUsername);
 
     const result = await fetchPublicAnalysis(normalisedUsername);
     if (!result.ok) {
@@ -89,6 +134,7 @@ export default function Home() {
     }
 
     setData(result.data);
+    setUsername(result.data.profile.username);
     setState("loaded");
   }
 
@@ -106,6 +152,7 @@ export default function Home() {
 
     setState("loading");
     setError(null);
+    await rememberUsername(normalisedUsername);
     setExtensionState("scanning");
     setExtensionMessage(`Trying a paginated no-tab Reddit scan for u/${normalisedUsername}. If Reddit blocks JSON, PaidPolitely will fall back to a quiet tab.`);
 
@@ -139,38 +186,39 @@ export default function Home() {
     }
   }
 
+  const loading = state === "loading" || workspaceState === "loading";
+
   return (
-    <AuthGate>
-      <main className="min-h-screen bg-[#120b16] bg-[radial-gradient(circle_at_top_left,rgba(255,79,145,0.28),transparent_36rem),radial-gradient(circle_at_top_right,rgba(255,184,107,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.025),transparent_26rem)] px-4 py-10 text-[#fff8fb] sm:px-6 lg:px-8">
-        <div className="mx-auto w-full max-w-[1180px]">
-          <UserMenu />
-          <Hero />
+    <main className="min-h-screen bg-[#120b16] bg-[radial-gradient(circle_at_top_left,rgba(255,79,145,0.28),transparent_36rem),radial-gradient(circle_at_top_right,rgba(255,184,107,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.025),transparent_26rem)] px-4 py-10 text-[#fff8fb] sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1180px]">
+        <UserMenu />
+        <Hero />
 
-          {state === "error" && error ? <ErrorCard message={error} /> : null}
+        {state === "error" && error ? <ErrorCard message={error} /> : null}
+        {workspaceState === "error" && error ? <ErrorCard message={error} /> : null}
 
-          <ScanSetupCard
-            username={username}
-            setUsername={setUsername}
-            extensionState={extensionState}
-            extensionMessage={extensionMessage}
-            extensionVersion={extensionVersion}
-            hasData={Boolean(data)}
-            loading={state === "loading"}
-            onCheck={checkExtension}
-            onScan={scanWithExtension}
-            onTryPublicJson={analysePublicJson}
-          />
+        <ScanSetupCard
+          username={username}
+          setUsername={setUsername}
+          extensionState={extensionState}
+          extensionMessage={extensionMessage}
+          extensionVersion={extensionVersion}
+          hasData={Boolean(data)}
+          loading={loading}
+          onCheck={checkExtension}
+          onScan={scanWithExtension}
+          onTryPublicJson={analysePublicJson}
+        />
 
-          <ManualImportCard
-            importPayload={importPayload}
-            setImportPayload={setImportPayload}
-            onImport={analyseImport}
-            loading={state === "loading"}
-          />
+        {data ? <Dashboard data={data} /> : <EmptyState />}
 
-          {data ? <Dashboard data={data} /> : <EmptyState />}
-        </div>
-      </main>
-    </AuthGate>
+        <ManualImportCard
+          importPayload={importPayload}
+          setImportPayload={setImportPayload}
+          onImport={analyseImport}
+          loading={loading}
+        />
+      </div>
+    </main>
   );
 }
