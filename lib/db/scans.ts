@@ -18,6 +18,8 @@ type MediaGroupAccumulator = {
   bestPostScore: number;
 };
 
+type SubredditLookup = Map<string, string>;
+
 function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
@@ -30,6 +32,46 @@ function toDate(value: string | null): Date | undefined {
 
 function redditPostId(post: RedditPost): string {
   return post.id.startsWith("t3_") ? post.id : `t3_${post.id}`;
+}
+
+function subredditKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function uniqueSubreddits(data: RedditAccountData, analytics: AccountAnalytics): string[] {
+  const names = new Set<string>();
+
+  for (const post of data.posts) names.add(post.subreddit);
+  for (const comment of data.comments) names.add(comment.subreddit);
+  for (const row of analytics.subreddits) names.add(row.subreddit);
+
+  return [...names].map((name) => name.trim()).filter(Boolean);
+}
+
+async function upsertSubreddits(names: string[]): Promise<SubredditLookup> {
+  if (names.length === 0) return new Map();
+
+  await prisma.subreddit.createMany({
+    data: names.map((name) => ({
+      name: subredditKey(name),
+      displayName: name,
+    })),
+    skipDuplicates: true,
+  });
+
+  const rows = await prisma.subreddit.findMany({
+    where: {
+      name: {
+        in: names.map(subredditKey),
+      },
+    },
+    select: {
+      id: true,
+      name: true,
+    },
+  });
+
+  return new Map(rows.map((row) => [row.name, row.id]));
 }
 
 function buildMediaGroups(posts: RedditPost[]): MediaGroupAccumulator[] {
@@ -63,10 +105,11 @@ function buildMediaGroups(posts: RedditPost[]): MediaGroupAccumulator[] {
   return [...groups.values()].filter((group) => group.postCount > 1 || group.totalScore > 0);
 }
 
-function subredditSnapshotData(scanId: string, accountId: string, row: SubredditMetric) {
+function subredditSnapshotData(scanId: string, accountId: string, row: SubredditMetric, subredditLookup: SubredditLookup) {
   return {
     scanId,
     accountId,
+    subredditId: subredditLookup.get(subredditKey(row.subreddit)),
     subreddit: row.subreddit,
     posts: row.posts,
     comments: row.comments,
@@ -76,7 +119,25 @@ function subredditSnapshotData(scanId: string, accountId: string, row: Subreddit
   };
 }
 
+async function enqueuePostDeepDiveJobs(scanId: string, ownerId?: string): Promise<void> {
+  const posts = await prisma.postSnapshot.findMany({
+    where: { scanId },
+    select: { id: true },
+  });
+
+  if (posts.length === 0) return;
+
+  await prisma.postDeepDiveJob.createMany({
+    data: posts.map((post) => ({
+      ownerUserId: ownerId,
+      postSnapshotId: post.id,
+      status: "QUEUED",
+    })),
+  });
+}
+
 export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics, ownerId?: string): Promise<SavedScan> {
+  const subredditLookup = await upsertSubreddits(uniqueSubreddits(data, analytics));
   const existing = await prisma.redditAccount.findFirst({
     where: {
       ownerUserId: ownerId ?? null,
@@ -147,6 +208,7 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
     data: data.posts.map((post) => ({
       scanId: scan.id,
       accountId: account.id,
+      subredditId: subredditLookup.get(subredditKey(post.subreddit)),
       redditId: redditPostId(post),
       title: post.title,
       subreddit: post.subreddit,
@@ -171,6 +233,7 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
     data: data.comments.map((comment) => ({
       scanId: scan.id,
       accountId: account.id,
+      subredditId: subredditLookup.get(subredditKey(comment.subreddit)),
       redditId: comment.id.startsWith("t1_") ? comment.id : `t1_${comment.id}`,
       body: comment.body,
       subreddit: comment.subreddit,
@@ -183,7 +246,7 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
   });
 
   await prisma.subredditSnapshot.createMany({
-    data: analytics.subreddits.map((row) => subredditSnapshotData(scan.id, account.id, row)),
+    data: analytics.subreddits.map((row) => subredditSnapshotData(scan.id, account.id, row, subredditLookup)),
     skipDuplicates: true,
   });
 
@@ -201,6 +264,8 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
     })),
     skipDuplicates: true,
   });
+
+  await enqueuePostDeepDiveJobs(scan.id, ownerId);
 
   return {
     accountId: account.id,
