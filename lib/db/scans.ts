@@ -76,39 +76,44 @@ function subredditSnapshotData(scanId: string, accountId: string, row: Subreddit
   };
 }
 
-export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics, ownerId: string): Promise<SavedScan> {
-  const account = await prisma.redditAccount.upsert({
+export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics, ownerId?: string): Promise<SavedScan> {
+  const existing = await prisma.redditAccount.findFirst({
     where: {
-      ownerUserId_username: {
-        ownerUserId: ownerId,
-        username: data.profile.username,
-      },
-    },
-    update: {
-      redditId: data.profile.id,
-      createdUtc: data.profile.createdUtc,
-      totalKarma: data.profile.totalKarma,
-      linkKarma: data.profile.linkKarma,
-      commentKarma: data.profile.commentKarma,
-      awardeeKarma: data.profile.awardeeKarma,
-      awarderKarma: data.profile.awarderKarma,
-      over18: data.profile.over18,
-      iconUrl: data.profile.iconUrl,
-    },
-    create: {
-      ownerUserId: ownerId,
-      redditId: data.profile.id,
+      ownerUserId: ownerId ?? null,
       username: data.profile.username,
-      createdUtc: data.profile.createdUtc,
-      totalKarma: data.profile.totalKarma,
-      linkKarma: data.profile.linkKarma,
-      commentKarma: data.profile.commentKarma,
-      awardeeKarma: data.profile.awardeeKarma,
-      awarderKarma: data.profile.awarderKarma,
-      over18: data.profile.over18,
-      iconUrl: data.profile.iconUrl,
     },
   });
+
+  const account = existing
+    ? await prisma.redditAccount.update({
+        where: { id: existing.id },
+        data: {
+          redditId: data.profile.id,
+          createdUtc: data.profile.createdUtc,
+          totalKarma: data.profile.totalKarma,
+          linkKarma: data.profile.linkKarma,
+          commentKarma: data.profile.commentKarma,
+          awardeeKarma: data.profile.awardeeKarma,
+          awarderKarma: data.profile.awarderKarma,
+          over18: data.profile.over18,
+          iconUrl: data.profile.iconUrl,
+        },
+      })
+    : await prisma.redditAccount.create({
+        data: {
+          ownerUserId: ownerId,
+          redditId: data.profile.id,
+          username: data.profile.username,
+          createdUtc: data.profile.createdUtc,
+          totalKarma: data.profile.totalKarma,
+          linkKarma: data.profile.linkKarma,
+          commentKarma: data.profile.commentKarma,
+          awardeeKarma: data.profile.awardeeKarma,
+          awarderKarma: data.profile.awarderKarma,
+          over18: data.profile.over18,
+          iconUrl: data.profile.iconUrl,
+        },
+      });
 
   const scan = await prisma.accountScan.create({
     data: {
