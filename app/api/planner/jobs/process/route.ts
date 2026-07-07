@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { processNextPlannerJob } from "@/lib/planner/queue";
 
+export const dynamic = "force-dynamic";
+
 type ErrorResponse = {
   error: string;
 };
