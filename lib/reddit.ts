@@ -1,6 +1,6 @@
 import type { RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
 
-const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.1.1 (by /u/ptekspy)";
+const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.1.2 (by /u/ptekspy)";
 const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 const MAX_LISTING_ITEMS = 100;
