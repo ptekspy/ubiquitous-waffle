@@ -2,7 +2,7 @@
 
 v0.3.0 of the PaidPolitely Reddit account analytics SaaS.
 
-This version adds Better Auth email/password accounts, console-printed email verification codes for local development, PostgreSQL scan persistence, a saved Reddit username per user, latest-dashboard hydration on reload, and the queued Ollama planner.
+This version adds Better Auth email/password accounts, console-printed email verification codes for local development, PostgreSQL scan persistence, a saved Reddit username per user, latest-dashboard hydration on reload, queued post deep dives, and the queued Ollama planner.
 
 The extension does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
@@ -13,14 +13,14 @@ The extension does **not** read Reddit passwords, cookies, session tokens, priva
 - Verifies email with a one-time code printed to the Next.js server console.
 - Saves one default Reddit username on the signed-in user.
 - Reloads the latest saved dashboard automatically after sign-in or page refresh.
+- Stores subreddits as first-class entities and links post/comment snapshots to them.
+- Queues each captured post for a deeper thread crawl.
+- Stores refreshed post score, upvote ratio, comment count, estimated up/down vote split, and top thread comments.
 - Accepts a Reddit username, profile URL, or `u/username` value.
-- Tries public server-side profile data from `about.json`.
 - Uses the extension no-tab scan and quiet-tab fallback when server-side JSON is blocked.
 - Saves cleaned scans to PostgreSQL through Prisma 7.
-- Scopes saved Reddit accounts, scans, and planner jobs to the signed-in user.
-- Stores accounts, scans, post snapshots, comment snapshots, subreddit snapshots, repeated media groups, and planner jobs.
+- Scopes saved Reddit accounts, scans, crawler jobs, and planner jobs to the signed-in user.
 - Queues next-post planner jobs instead of calling Ollama inline during the scan request.
-- Adds a persistent planner worker command.
 - Shows dashboard panels for health, stats, subreddit performance, format signal, timeline, top posts, top comments, and AI planning.
 
 ## Run locally
@@ -34,9 +34,10 @@ pnpm dev
 
 Open `http://localhost:3000`.
 
-In a second terminal, run the persistent planner worker:
+In another terminal, run the persistent workers:
 
 ```bash
+pnpm worker:crawler
 pnpm worker:planner
 ```
 
@@ -51,6 +52,7 @@ BETTER_AUTH_URL="http://localhost:3000"
 OLLAMA_BASE_URL="https://ollama.tik-track.com"
 OLLAMA_PLANNER_MODEL=""
 PLANNER_WORKER_SECRET=""
+CRAWLER_WORKER_SECRET=""
 ```
 
 Generate a local auth secret with:
@@ -62,13 +64,14 @@ openssl rand -base64 32
 ## Local auth and workspace flow
 
 1. Start `pnpm dev`.
-2. Open `http://localhost:3000`.
-3. Create an account with email and password.
-4. Watch the terminal running `pnpm dev`.
-5. Copy the printed verification code.
-6. Paste it into the verification form.
-7. Enter the Reddit username once and scan.
-8. Refresh the page or sign out/in again; the saved username and latest persisted dashboard reload automatically.
+2. Start `pnpm worker:crawler` and `pnpm worker:planner` in separate terminals.
+3. Open `http://localhost:3000`.
+4. Create an account with email and password.
+5. Watch the terminal running `pnpm dev`.
+6. Copy the printed verification code.
+7. Paste it into the verification form.
+8. Enter the Reddit username once and scan.
+9. Refresh the page or sign out/in again; the saved username and latest persisted dashboard reload automatically.
 
 ## Workspace API
 
@@ -78,16 +81,7 @@ The workspace route is session-scoped.
 GET /api/workspace
 ```
 
-Returns the saved Reddit username and the latest persisted dashboard payload:
-
-```ts
-type WorkspaceResponse = {
-  settings: {
-    redditUsername: string | null;
-  };
-  latest: AnalyzeResponse | null;
-};
-```
+Returns the saved Reddit username and the latest persisted dashboard payload.
 
 Update the saved username:
 
@@ -100,11 +94,26 @@ Content-Type: application/json
 }
 ```
 
+## Post crawler queue
+
+Scan imports create one post deep-dive job per captured post.
+
+The persistent crawler calls:
+
+```http
+POST /api/crawler/posts/process
+Authorization: Bearer <CRAWLER_WORKER_SECRET>
+```
+
+Local development can omit `CRAWLER_WORKER_SECRET`; if it is blank the endpoint can also use `PLANNER_WORKER_SECRET`.
+
+Reddit does not expose exact raw likes. The crawler stores public score, upvote ratio, comment count, estimated upvotes/downvotes, and thread comments.
+
 ## Planner queue
 
 Scan imports create a queued planner job. The website does not call Ollama directly while handling the scan request.
 
-The persistent worker calls:
+The persistent planner calls:
 
 ```http
 POST /api/planner/jobs/process
@@ -112,14 +121,6 @@ Authorization: Bearer <PLANNER_WORKER_SECRET>
 ```
 
 Local development can omit `PLANNER_WORKER_SECRET`. Production should set it.
-
-Read a queued/completed job with:
-
-```http
-GET /api/planner/jobs?jobId=<job-id>
-```
-
-More detail: `docs/v0.3.0-persistence-and-planner.md`.
 
 ## API
 
@@ -140,18 +141,6 @@ Content-Type: application/json
 {
   "raw": "{...capture JSON...}"
 }
-```
-
-Returns:
-
-```ts
-type AnalyzeResponse = {
-  profile: RedditProfile;
-  analytics: AccountAnalytics;
-  warnings: string[];
-  scanId?: string;
-  plannerJob?: PlannerJobSummary | null;
-};
 ```
 
 ## Manual browser capture fallback
