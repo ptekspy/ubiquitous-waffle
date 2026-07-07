@@ -1,6 +1,6 @@
 import type { RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
 
-const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.1.2 (by /u/ptekspy)";
+const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.3.0 (by /u/ptekspy)";
 const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 const MAX_LISTING_ITEMS = 100;
@@ -277,11 +277,18 @@ export async function fetchRedditAccountData(input: string): Promise<RedditAccou
     fetchListing<RawPost>(username, "submitted"),
     fetchListing<RawComment>(username, "comments"),
   ]);
+  const posts = submitted.items.map(toPost).filter((post) => post.createdUtc > 0);
+  const parsedComments = comments.items.map(toComment).filter((comment) => comment.createdUtc > 0);
 
   return {
     profile: toProfile(username, profileResponse.data),
-    posts: submitted.items.map(toPost).filter((post) => post.createdUtc > 0),
-    comments: comments.items.map(toComment).filter((comment) => comment.createdUtc > 0),
+    posts,
+    comments: parsedComments,
+    source: "server-reddit-json",
+    capturedAt: null,
+    metadata: null,
+    rawPostCount: submitted.items.length,
+    rawCommentCount: comments.items.length,
     warnings: [submitted.warning, comments.warning].filter((warning): warning is string => Boolean(warning)),
   };
 }
