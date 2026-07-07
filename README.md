@@ -1,6 +1,6 @@
 # PaidPolitely Reddit Analytics
 
-v0.2.0 of the PaidPolitely Reddit account analytics SaaS.
+v0.2.1 of the PaidPolitely Reddit account analytics SaaS.
 
 This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON for profiles, submissions, and comments. If Reddit blocks server-side JSON with a 403, the UI now has two browser-session options:
 
@@ -9,15 +9,16 @@ This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON
 
 The extension does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
-## What v0.2.0 does
+## What v0.2.1 does
 
 - Accepts a Reddit username, profile URL, or `u/username` value.
 - Tries public profile data from `about.json`.
 - Tries latest public submitted posts and comments.
 - Retries public JSON requests through `www.reddit.com` and `api.reddit.com`.
 - Uses API-style headers first, then browser-style headers as a fallback.
-- Detects whether the PaidPolitely Capture extension is configured and installed.
-- Adds a one-click extension bridge for Reddit profile capture.
+- Detects whether the PaidPolitely Capture extension is installed via a content-script bridge on the PaidPolitely page.
+- Falls back to direct `chrome.runtime.sendMessage(extensionId, ...)` if an extension ID is configured.
+- Adds an extension popup so clicking the extension icon confirms it is installed.
 - Lets the extension open or focus `https://www.reddit.com/user/<username>/submitted/`.
 - Signposts the user if Reddit needs login or mature-content confirmation.
 - Auto-scrolls the Reddit profile during browser capture so virtualised posts are mounted into the DOM.
@@ -56,10 +57,10 @@ Open `http://localhost:3000`.
 
 ## Environment
 
-Copy `.env.example` to `.env.local` if you want to customise Reddit request behaviour or test the extension bridge:
+Copy `.env.example` to `.env.local` if you want to customise Reddit request behaviour:
 
 ```bash
-REDDIT_USER_AGENT="web:paidpolitely.reddit-analytics:v0.2.0 (by /u/ptekspy)"
+REDDIT_USER_AGENT="web:paidpolitely.reddit-analytics:v0.2.1 (by /u/ptekspy)"
 REDDIT_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 REDDIT_DEBUG="0"
 NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID=""
@@ -67,6 +68,8 @@ NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE_URL=""
 ```
 
 Set `REDDIT_DEBUG=1` locally to print failed Reddit fetch attempts to the dev server console.
+
+`NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID` can stay blank for local v0.2.1 testing because the website now detects the extension through the injected content-script bridge. Set it only if you want to test the direct extension-ID fallback.
 
 ## API
 
@@ -101,46 +104,26 @@ type AnalyzeResponse = {
 
 ### 1. Confirm the website handles missing extension state
 
-Start the app with no extension ID configured:
+Run the app before installing the extension:
 
 ```bash
-NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID=""
 pnpm dev
 ```
 
-Open `http://localhost:3000`. The extension panel should show that the extension ID is needed / not configured.
+Open `http://localhost:3000`. The extension panel should show **Not detected**.
 
-To test the explicit “not detected” state, set a fake 32-character ID, restart `pnpm dev`, and reload the page:
-
-```bash
-NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID="aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
-```
-
-The extension panel should show that the extension is not detected.
-
-### 2. Install the unpacked extension locally
+### 2. Install or reload the unpacked extension locally
 
 1. Open Chrome or Edge.
 2. Go to `chrome://extensions`.
 3. Enable **Developer mode**.
 4. Click **Load unpacked**.
 5. Select this repo's `extension` folder.
-6. Copy the extension ID shown on the extension card.
-7. Add it to `.env.local`:
+6. Click the PaidPolitely Capture extension icon. A popup should appear. If nothing appears, click **Reload** on the extension card in `chrome://extensions`.
+7. Reload `http://localhost:3000` so the content-script bridge attaches to the page.
+8. Click **Check extension**.
 
-```bash
-NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID="paste-extension-id-here"
-```
-
-8. Restart the app:
-
-```bash
-pnpm dev
-```
-
-9. Reload `http://localhost:3000` and click **Check extension**.
-
-The extension panel should show **Installed**.
+The extension panel should show **Installed** and mention the `content-script` bridge.
 
 ### 3. Scan with the extension
 
@@ -150,6 +133,18 @@ The extension panel should show **Installed**.
 4. If Reddit asks you to sign in or confirm mature content, follow the signpost in the Reddit tab, then click **Continue scan**.
 5. The extension scrolls/captures the profile and sends the payload back to the website.
 6. The website imports the payload automatically and renders the analytics dashboard.
+
+### Troubleshooting detection
+
+If the website still says **Not detected**:
+
+1. Pull latest.
+2. Go to `chrome://extensions`.
+3. Click **Reload** on the PaidPolitely Capture card.
+4. Click the extension icon and confirm the popup appears.
+5. Fully reload `http://localhost:3000`.
+6. Click **Check extension** again.
+7. Open DevTools on the PaidPolitely page and check the Console if it still fails.
 
 ## Manual browser capture fallback
 
