@@ -83,6 +83,28 @@ function normaliseUsername(value: unknown): string {
   return username;
 }
 
+function subredditFromPermalink(value: unknown): string {
+  const permalink = asString(value);
+  return permalink.match(/\/r\/([^/]+)\//i)?.[1] ?? "";
+}
+
+function redditIdFromPermalink(value: unknown): string {
+  const permalink = asString(value);
+  const id = permalink.match(/\/comments\/([^/]+)\//i)?.[1];
+  return id ? `t3_${id}` : "";
+}
+
+function cleanSubreddit(rawSubreddit: unknown, title: string, permalink: unknown, username: string): string {
+  const fromPermalink = subredditFromPermalink(permalink);
+  const fromPayload = asString(rawSubreddit).replace(/^r\//i, "");
+
+  if (fromPermalink) return fromPermalink;
+  if (fromPayload && fromPayload !== title) return fromPayload;
+  if (asString(permalink).match(/\/user\/[^/]+\/comments\//i)) return `u_${username}`;
+
+  return "";
+}
+
 function toProfile(payload: BrowserImportPayload): RedditProfile {
   const profile = payload.profile ?? {};
   const username = normaliseUsername(profile.username ?? payload.username);
@@ -104,15 +126,15 @@ function toProfile(payload: BrowserImportPayload): RedditProfile {
   };
 }
 
-function toPost(raw: BrowserImportPost, index: number): RedditPost | null {
+function toPost(raw: BrowserImportPost, index: number, username: string): RedditPost | null {
   const title = asString(raw.title);
-  const subreddit = asString(raw.subreddit).replace(/^r\//i, "");
+  const subreddit = cleanSubreddit(raw.subreddit, title, raw.permalink, username);
   const permalink = absoluteRedditUrl(raw.permalink);
 
-  if (!title || !subreddit) return null;
+  if (!title || !subreddit || permalink === "https://www.reddit.com") return null;
 
   return {
-    id: asString(raw.id, `browser-post-${index}`),
+    id: redditIdFromPermalink(raw.permalink) || asString(raw.id, `browser-post-${index}`),
     title,
     subreddit,
     permalink,
@@ -127,6 +149,25 @@ function toPost(raw: BrowserImportPost, index: number): RedditPost | null {
     domain: null,
     postHint: asString(raw.postHint) || null,
   };
+}
+
+function scorePostQuality(post: RedditPost): number {
+  return (post.id.startsWith("t3_") ? 10_000 : 0) + post.score + post.numComments;
+}
+
+function dedupePosts(posts: RedditPost[]): RedditPost[] {
+  const rows = new Map<string, RedditPost>();
+
+  for (const post of posts) {
+    const key = redditIdFromPermalink(post.permalink) || post.id || post.permalink;
+    const existing = rows.get(key);
+
+    if (!existing || scorePostQuality(post) > scorePostQuality(existing)) {
+      rows.set(key, post);
+    }
+  }
+
+  return [...rows.values()];
 }
 
 function toComment(raw: BrowserImportComment, index: number): RedditComment | null {
@@ -163,12 +204,15 @@ function parsePayload(raw: string): BrowserImportPayload {
 export function parseBrowserImport(raw: string): RedditAccountData {
   const payload = parsePayload(raw);
   const profile = toProfile(payload);
-  const posts = Array.isArray(payload.posts)
-    ? payload.posts.map(toPost).filter((post): post is RedditPost => Boolean(post))
+  const rawPostCount = Array.isArray(payload.posts) ? payload.posts.length : 0;
+  const parsedPosts = Array.isArray(payload.posts)
+    ? payload.posts.map((post, index) => toPost(post, index, profile.username)).filter((post): post is RedditPost => Boolean(post))
     : [];
+  const posts = dedupePosts(parsedPosts);
   const comments = Array.isArray(payload.comments)
     ? payload.comments.map(toComment).filter((comment): comment is RedditComment => Boolean(comment))
     : [];
+  const removedPostRows = rawPostCount - posts.length;
 
   if (posts.length === 0 && comments.length === 0) {
     throw new BrowserImportError("Browser import did not contain any usable posts or comments.");
@@ -180,6 +224,7 @@ export function parseBrowserImport(raw: string): RedditAccountData {
     comments,
     warnings: [
       "Imported from browser capture because Reddit blocked server-side public JSON.",
+      removedPostRows > 0 ? `Cleaned ${removedPostRows} duplicate or incomplete browser post rows.` : null,
       posts.length === 0 ? "No posts were found in the browser import." : null,
       comments.length === 0 ? "No comments were found in the browser import." : null,
     ].filter((warning): warning is string => Boolean(warning)),
