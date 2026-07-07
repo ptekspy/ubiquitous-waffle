@@ -77,7 +77,7 @@ function subredditSnapshotData(scanId: string, accountId: string, row: Subreddit
 }
 
 export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics): Promise<SavedScan> {
-  const account = await prisma.account.upsert({
+  const account = await prisma.redditAccount.upsert({
     where: { username: data.profile.username },
     update: {
       redditId: data.profile.id,
