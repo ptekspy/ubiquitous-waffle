@@ -1,5 +1,3 @@
-import type { Prisma } from "@prisma/client";
-
 import type { AccountAnalytics, AnalyzeResponse, RedditProfile } from "@/lib/types";
 import { prisma } from "./prisma";
 
@@ -14,11 +12,11 @@ export type WorkspaceResponse = {
   latest: AnalyzeResponse | null;
 };
 
-function isAccountAnalytics(value: Prisma.JsonValue): value is AccountAnalytics {
+function isAccountAnalytics(value: unknown): value is AccountAnalytics {
   return typeof value === "object" && value !== null && !Array.isArray(value) && "summary" in value && "subreddits" in value;
 }
 
-function stringArray(value: Prisma.JsonValue | null): string[] {
+function stringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value.filter((item): item is string => typeof item === "string");
 }
@@ -63,7 +61,7 @@ function toPlannerJob(job: LatestScanRecord["plannerJobs"][number] | undefined):
     id: job.id,
     status: job.status,
     model: job.model,
-    result: typeof job.result === "object" && job.result !== null && !Array.isArray(job.result) ? job.result as Record<string, unknown> : null,
+    result: typeof job.result === "object" && job.result !== null && !Array.isArray(job.result) ? (job.result as Record<string, unknown>) : null,
     error: job.error,
     createdAt: job.createdAt.toISOString(),
     updatedAt: job.updatedAt.toISOString(),
