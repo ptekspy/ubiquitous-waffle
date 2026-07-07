@@ -2,6 +2,7 @@ const REDDIT_PROFILE_URL = "https://www.reddit.com/user/{username}/submitted/";
 const OVERLAY_TIMEOUT_MS = 10 * 60 * 1000;
 const TAB_LOAD_TIMEOUT_MS = 45 * 1000;
 const REDDIT_JSON_LIMIT = 100;
+const REDDIT_JSON_MAX_PAGES = 10;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender)
@@ -70,14 +71,15 @@ async function scanRedditProfile(username, options = { preferHeadless: true, ope
 }
 
 async function scanRedditProfileWithoutTab(username) {
-  const aboutUrl = `https://www.reddit.com/user/${encodeURIComponent(username)}/about.json?raw_json=1`;
-  const submittedUrl = `https://www.reddit.com/user/${encodeURIComponent(username)}/submitted.json?limit=${REDDIT_JSON_LIMIT}&raw_json=1`;
-  const commentsUrl = `https://www.reddit.com/user/${encodeURIComponent(username)}/comments.json?limit=${REDDIT_JSON_LIMIT}&raw_json=1`;
+  const encodedUsername = encodeURIComponent(username);
+  const aboutUrl = `https://www.reddit.com/user/${encodedUsername}/about.json?raw_json=1`;
+  const submittedUrl = `https://www.reddit.com/user/${encodedUsername}/submitted.json`;
+  const commentsUrl = `https://www.reddit.com/user/${encodedUsername}/comments.json`;
 
   const [aboutResult, submittedResult, commentsResult] = await Promise.all([
     fetchRedditJson(aboutUrl),
-    fetchRedditJson(submittedUrl),
-    fetchRedditJson(commentsUrl),
+    fetchRedditListing(submittedUrl, REDDIT_JSON_MAX_PAGES),
+    fetchRedditListing(commentsUrl, REDDIT_JSON_MAX_PAGES),
   ]);
 
   if (!submittedResult.ok && !commentsResult.ok) {
@@ -89,8 +91,8 @@ async function scanRedditProfileWithoutTab(username) {
   }
 
   const profile = aboutResult.ok ? toHeadlessProfile(aboutResult.data, username) : fallbackProfile(username);
-  const posts = submittedResult.ok ? extractListingChildren(submittedResult.data).map(toHeadlessPost).filter(Boolean) : [];
-  const comments = commentsResult.ok ? extractListingChildren(commentsResult.data).map(toHeadlessComment).filter(Boolean) : [];
+  const posts = submittedResult.ok ? submittedResult.children.map(toHeadlessPost).filter(Boolean) : [];
+  const comments = commentsResult.ok ? commentsResult.children.map(toHeadlessComment).filter(Boolean) : [];
 
   if (posts.length === 0 && comments.length === 0) {
     return {
@@ -104,14 +106,56 @@ async function scanRedditProfileWithoutTab(username) {
     ok: true,
     status: "captured_headless",
     payload: {
-      source: "paidpolitely-reddit-extension-headless-v1",
+      source: "paidpolitely-reddit-extension-headless-v2",
       capturedAt: new Date().toISOString(),
       username,
       profile,
       posts,
       comments,
+      metadata: {
+        headless: {
+          pageSize: REDDIT_JSON_LIMIT,
+          maxPages: REDDIT_JSON_MAX_PAGES,
+          submittedPages: submittedResult.ok ? submittedResult.pages : 0,
+          commentPages: commentsResult.ok ? commentsResult.pages : 0,
+          submittedTruncated: submittedResult.ok ? Boolean(submittedResult.after) : false,
+          commentsTruncated: commentsResult.ok ? Boolean(commentsResult.after) : false,
+        },
+      },
     },
   };
+}
+
+async function fetchRedditListing(baseUrl, maxPages) {
+  const children = [];
+  let after = "";
+  let pages = 0;
+
+  for (let page = 0; page < maxPages; page += 1) {
+    const url = new URL(baseUrl);
+    url.searchParams.set("limit", String(REDDIT_JSON_LIMIT));
+    url.searchParams.set("raw_json", "1");
+    if (after) url.searchParams.set("after", after);
+
+    const result = await fetchRedditJson(url.toString());
+    if (!result.ok) {
+      if (children.length > 0) {
+        return { ok: true, children, pages, after, truncated: true, error: result.error };
+      }
+
+      return result;
+    }
+
+    const pageChildren = extractListingChildren(result.data);
+    children.push(...pageChildren);
+    pages += 1;
+    after = typeof result.data?.data?.after === "string" ? result.data.data.after : "";
+
+    if (!after || pageChildren.length === 0) break;
+    await delay(150);
+  }
+
+  return { ok: true, children, pages, after, truncated: Boolean(after) };
 }
 
 async function fetchRedditJson(url) {
