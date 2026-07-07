@@ -105,7 +105,7 @@ export default function Home() {
     setState("loading");
     setError(null);
     setExtensionState("scanning");
-    setExtensionMessage(`Trying a no-tab Reddit scan for u/${normalisedUsername}. If Reddit blocks JSON, PaidPolitely will fall back to a quiet tab.`);
+    setExtensionMessage(`Trying a paginated no-tab Reddit scan for u/${normalisedUsername}. If Reddit blocks JSON, PaidPolitely will fall back to a quiet tab.`);
 
     try {
       const response = await sendExtensionMessage<ExtensionScanResponse>({
