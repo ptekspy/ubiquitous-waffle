@@ -4,6 +4,7 @@ const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.3.0 (by /u/ptek
 const DEFAULT_BROWSER_USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 const MAX_LISTING_ITEMS = 100;
+const MAX_THREAD_COMMENTS = 500;
 
 type RedditApiResponse<T> = {
   kind: string;
@@ -55,6 +56,15 @@ type RawComment = {
   link_title?: string;
 };
 
+type RawThreadComment = RawComment & {
+  author?: string;
+  parent_id?: string;
+  replies?: "" | ListingResponse<RawThreadComment>;
+  depth?: number;
+  is_submitter?: boolean;
+  distinguished?: string | null;
+};
+
 type FetchAttempt = {
   label: string;
   url: string;
@@ -65,6 +75,26 @@ type FetchFailure = {
   label: string;
   status: number;
   body: string;
+};
+
+export type RedditThreadComment = {
+  redditId: string;
+  parentRedditId: string | null;
+  author: string | null;
+  body: string;
+  subreddit: string;
+  permalink: string | null;
+  createdUtc: number;
+  score: number;
+  depth: number;
+  isSubmitter: boolean;
+  distinguished: string | null;
+};
+
+export type RedditPostDeepDive = {
+  post: RedditPost;
+  comments: RedditThreadComment[];
+  rawCommentCount: number;
 };
 
 export class RedditFetchError extends Error {
@@ -156,7 +186,7 @@ function errorMessageForStatus(status: number): string {
   return `Reddit returned ${status}.`;
 }
 
-async function redditFetch<T>(path: string): Promise<T> {
+export async function redditFetch<T>(path: string): Promise<T> {
   const failures: FetchFailure[] = [];
 
   for (const attempt of buildFetchAttempts(path)) {
@@ -243,6 +273,39 @@ function toComment(raw: RawComment): RedditComment {
   };
 }
 
+function toThreadComment(raw: RawThreadComment, fallbackSubreddit: string, depth: number): RedditThreadComment {
+  return {
+    redditId: raw.id.startsWith("t1_") ? raw.id : `t1_${raw.id}`,
+    parentRedditId: raw.parent_id ?? null,
+    author: raw.author ?? null,
+    body: raw.body ?? "",
+    subreddit: raw.subreddit ?? fallbackSubreddit,
+    permalink: raw.permalink ? `https://www.reddit.com${raw.permalink}` : null,
+    createdUtc: raw.created_utc ?? 0,
+    score: raw.score ?? 0,
+    depth: raw.depth ?? depth,
+    isSubmitter: raw.is_submitter ?? false,
+    distinguished: raw.distinguished ?? null,
+  };
+}
+
+function flattenThreadComments(children: Array<RedditApiResponse<RawThreadComment>>, fallbackSubreddit: string, depth = 0): RedditThreadComment[] {
+  const comments: RedditThreadComment[] = [];
+
+  for (const child of children) {
+    if (child.kind !== "t1") continue;
+
+    comments.push(toThreadComment(child.data, fallbackSubreddit, depth));
+
+    const replies = child.data.replies;
+    if (typeof replies === "object" && replies?.data?.children) {
+      comments.push(...flattenThreadComments(replies.data.children, fallbackSubreddit, depth + 1));
+    }
+  }
+
+  return comments;
+}
+
 async function fetchListing<T>(username: string, listing: "submitted" | "comments"): Promise<{ items: T[]; warning: string | null }> {
   const params = new URLSearchParams({
     limit: String(MAX_LISTING_ITEMS),
@@ -265,6 +328,30 @@ async function fetchListing<T>(username: string, listing: "submitted" | "comment
 
     throw error;
   }
+}
+
+export async function fetchRedditPostDeepDive(postId: string): Promise<RedditPostDeepDive> {
+  const cleanId = postId.replace(/^t3_/, "");
+  const params = new URLSearchParams({
+    limit: String(MAX_THREAD_COMMENTS),
+    raw_json: "1",
+    sort: "top",
+  });
+  const response = await redditFetch<[ListingResponse<RawPost>, ListingResponse<RawThreadComment>]>(`/comments/${cleanId}.json?${params}`);
+  const rawPost = response[0]?.data?.children?.[0]?.data;
+
+  if (!rawPost) {
+    throw new RedditFetchError("Reddit post not found or not publicly available.", 404);
+  }
+
+  const post = toPost(rawPost);
+  const comments = flattenThreadComments(response[1]?.data?.children ?? [], post.subreddit).filter((comment) => comment.createdUtc > 0);
+
+  return {
+    post,
+    comments,
+    rawCommentCount: response[1]?.data?.children?.length ?? 0,
+  };
 }
 
 export async function fetchRedditAccountData(input: string): Promise<RedditAccountData> {
