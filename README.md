@@ -1,12 +1,12 @@
 # PaidPolitely Reddit Analytics
 
-v0.2.4 of the PaidPolitely Reddit account analytics SaaS.
+v0.2.5 of the PaidPolitely Reddit account analytics SaaS.
 
-This version deliberately avoids Reddit OAuth. It first tries public server-side Reddit JSON. If Reddit blocks that, the browser extension now tries a no-tab browser-session JSON scan before falling back to the quiet background-tab scanner.
+This version deliberately avoids Reddit OAuth. It first tries public server-side Reddit JSON. If Reddit blocks that, the browser extension now tries a paginated no-tab browser-session JSON scan before falling back to the quiet background-tab scanner.
 
 The extension does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
-## What v0.2.4 does
+## What v0.2.5 does
 
 - Accepts a Reddit username, profile URL, or `u/username` value.
 - Tries public server-side profile data from `about.json`.
@@ -16,6 +16,7 @@ The extension does **not** read Reddit passwords, cookies, session tokens, priva
 - Adds an extension popup so clicking the extension icon confirms it is installed.
 - Extension scan strategy:
   - first tries Reddit `about.json`, `submitted.json`, and `comments.json` from the extension service worker with browser credentials included
+  - paginates `submitted.json` and `comments.json` with Reddit's `after` cursor, 100 rows per page, up to 10 pages each
   - if Reddit blocks or empties those JSON responses, falls back to a quiet background tab
   - only brings Reddit forward when login, age confirmation, or troubleshooting is needed
 - Auto-scrolls the Reddit profile during tab fallback so virtualised posts are mounted into the DOM.
@@ -57,7 +58,7 @@ Open `http://localhost:3000`.
 Copy `.env.example` to `.env.local` if you want to customise Reddit request behaviour:
 
 ```bash
-REDDIT_USER_AGENT="web:paidpolitely.reddit-analytics:v0.2.1 (by /u/ptekspy)"
+REDDIT_USER_AGENT="web:paidpolitely.reddit-analytics:v0.2.5 (by /u/ptekspy)"
 REDDIT_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 REDDIT_DEBUG="0"
 NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID=""
@@ -66,7 +67,7 @@ NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE_URL=""
 
 Set `REDDIT_DEBUG=1` locally to print failed Reddit fetch attempts to the dev server console.
 
-`NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID` can stay blank for local v0.2.4 testing because the website detects the extension through the injected content-script bridge. Set it only if you want to test the direct extension-ID fallback.
+`NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID` can stay blank for local v0.2.5 testing because the website detects the extension through the injected content-script bridge. Set it only if you want to test the direct extension-ID fallback.
 
 ## API
 
@@ -127,9 +128,10 @@ The extension panel should show **Installed** and mention the `content-script` b
 1. Enter a Reddit username, for example `MrMrsHK`.
 2. Click **Scan u/MrMrsHK**.
 3. The extension first tries a no-tab Reddit JSON scan from its service worker.
-4. If Reddit blocks that, the extension reuses an existing matching Reddit profile tab or opens `https://www.reddit.com/user/MrMrsHK/submitted/` quietly in the background.
-5. If Reddit asks you to sign in or confirm mature content, follow the signpost in the Reddit tab, then click **Continue scan**.
-6. The website imports the payload automatically and renders the analytics dashboard.
+4. It paginates submitted posts and comments using Reddit's `after` cursor, up to 10 pages each.
+5. If Reddit blocks that, the extension reuses an existing matching Reddit profile tab or opens `https://www.reddit.com/user/MrMrsHK/submitted/` quietly in the background.
+6. If Reddit asks you to sign in or confirm mature content, follow the signpost in the Reddit tab, then click **Continue scan**.
+7. The website imports the payload automatically and renders the analytics dashboard.
 
 ### Troubleshooting detection
 
@@ -153,12 +155,3 @@ Keep this for debugging while the extension is local-only:
 4. Paste the snippet into the console and run it.
 5. Leave the page alone while it scrolls down, captures mounted posts, returns to the starting position, and copies JSON to your clipboard.
 6. Paste that JSON into PaidPolitely and click **Analyse browser import**.
-
-## Next iteration ideas
-
-- Package and publish the extension to the Chrome Web Store.
-- Store imported snapshots in Postgres.
-- Add username ownership verification via profile bio code.
-- Add historical score tracking.
-- Add shareable reports.
-- Add PaidPolitely network/subreddit recommendations.
