@@ -1,0 +1,67 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum PlannerJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+model Account {
+  id           String   @id @default(cuid())
+  redditId     String?
+  username     String   @unique
+  createdUtc   Int?
+  totalKarma   Int      @default(0)
+  linkKarma    Int      @default(0)
+  commentKarma Int      @default(0)
+  awardeeKarma Int      @default(0)
+  awarderKarma Int      @default(0)
+  over18       Boolean  @default(false)
+  iconUrl      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  scans       AccountScan[]
+  plannerJobs PlannerJob[]
+
+  @@index([username])
+}
+
+model AccountScan {
+  id                  String   @id @default(cuid())
+  accountId           String
+  source              String
+  capturedAt          DateTime?
+  fetchedAt           DateTime @default(now())
+  rawPostCount        Int      @default(0)
+  rawCommentCount     Int      @default(0)
+  cleanedPostCount    Int      @default(0)
+  cleanedCommentCount Int      @default(0)
+  totalPostScore      Int      @default(0)
+  totalCommentScore   Int      @default(0)
+  averagePostScore    Float    @default(0)
+  averageCommentScore Float    @default(0)
+  bestSubreddit       String?
+  bestPostingHourUtc  Int?
+  warnings            Json?
+  metadata            Json?
+  analytics           Json
+  createdAt           DateTime @default(now())
+
+  account            Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  postSnapshots      PostSnapshot[]
+  commentSnapshots   CommentSnapshot[]
+  subredditSnapshots SubredditSnapshot[]
+  mediaGroups        MediaGroup[]
+  plannerJobs        PlannerJob[]
+
+  @@index([accountId, fetchedAt])
+  @@index([source])
+}
