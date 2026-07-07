@@ -105,12 +105,14 @@ export default function Home() {
     setState("loading");
     setError(null);
     setExtensionState("scanning");
-    setExtensionMessage(`Opening Reddit quietly for u/${normalisedUsername}. It will only come to the front if Reddit needs login, age confirmation, or troubleshooting.`);
+    setExtensionMessage(`Trying a no-tab Reddit scan for u/${normalisedUsername}. If Reddit blocks JSON, PaidPolitely will fall back to a quiet tab.`);
 
     try {
       const response = await sendExtensionMessage<ExtensionScanResponse>({
         type: "PAIDPOLITELY_SCAN_REDDIT_PROFILE",
         username: normalisedUsername,
+        preferHeadless: true,
+        openInBackground: true,
       });
 
       if (!response.ok) {
@@ -125,7 +127,7 @@ export default function Home() {
       setImportPayload(raw);
       const imported = await importRawPayload(raw);
       setExtensionState("installed");
-      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}.` : "The extension captured data, but the app could not import it.");
+      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}${response.status === "captured_headless" ? " without opening Reddit" : " with quiet tab fallback"}.` : "The extension captured data, but the app could not import it.");
     } catch (extensionError) {
       setState("error");
       setExtensionState("missing");
