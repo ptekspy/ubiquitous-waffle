@@ -57,8 +57,8 @@ export async function processNextPostDeepDiveJob(): Promise<ProcessPostDeepDiveR
     const estimate = estimateVotes(deepDive.post.score, deepDive.post.upvoteRatio);
     const capturedAt = new Date();
 
-    await prisma.$transaction([
-      prisma.postSnapshot.update({
+    await prisma.$transaction(async (tx) => {
+      await tx.postSnapshot.update({
         where: { id: running.postSnapshotId },
         data: {
           deepDiveStatus: "COMPLETED",
@@ -69,8 +69,9 @@ export async function processNextPostDeepDiveJob(): Promise<ProcessPostDeepDiveR
           estimatedUpvotes: estimate.estimatedUpvotes,
           estimatedDownvotes: estimate.estimatedDownvotes,
         },
-      }),
-      prisma.postMetricSnapshot.create({
+      });
+
+      await tx.postMetricSnapshot.create({
         data: {
           postSnapshotId: running.postSnapshotId,
           score: deepDive.post.score,
@@ -80,36 +81,41 @@ export async function processNextPostDeepDiveJob(): Promise<ProcessPostDeepDiveR
           estimatedDownvotes: estimate.estimatedDownvotes,
           capturedAt,
         },
-      }),
-      prisma.postThreadComment.deleteMany({
+      });
+
+      await tx.postThreadComment.deleteMany({
         where: { postSnapshotId: running.postSnapshotId },
-      }),
-      prisma.postThreadComment.createMany({
-        data: deepDive.comments.map((comment) => ({
-          postSnapshotId: running.postSnapshotId,
-          redditId: comment.redditId,
-          parentRedditId: comment.parentRedditId,
-          author: comment.author,
-          body: comment.body,
-          subreddit: comment.subreddit,
-          permalink: comment.permalink,
-          createdUtc: comment.createdUtc,
-          score: comment.score,
-          depth: comment.depth,
-          isSubmitter: comment.isSubmitter,
-          distinguished: comment.distinguished,
-        })),
-        skipDuplicates: true,
-      }),
-      prisma.postDeepDiveJob.update({
+      });
+
+      if (deepDive.comments.length > 0) {
+        await tx.postThreadComment.createMany({
+          data: deepDive.comments.map((comment) => ({
+            postSnapshotId: running.postSnapshotId,
+            redditId: comment.redditId,
+            parentRedditId: comment.parentRedditId,
+            author: comment.author,
+            body: comment.body,
+            subreddit: comment.subreddit,
+            permalink: comment.permalink,
+            createdUtc: comment.createdUtc,
+            score: comment.score,
+            depth: comment.depth,
+            isSubmitter: comment.isSubmitter,
+            distinguished: comment.distinguished,
+          })),
+          skipDuplicates: true,
+        });
+      }
+
+      await tx.postDeepDiveJob.update({
         where: { id: running.id },
         data: {
           status: "COMPLETED",
           error: null,
           completedAt: capturedAt,
         },
-      }),
-    ]);
+      });
+    });
 
     return {
       processed: true,
