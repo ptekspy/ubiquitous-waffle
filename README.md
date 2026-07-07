@@ -1,10 +1,10 @@
 # PaidPolitely Reddit Analytics
 
-v0.1.2 of the PaidPolitely Reddit account analytics SaaS.
+v0.1.3 of the PaidPolitely Reddit account analytics SaaS.
 
-This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON for profiles, submissions, and comments. If Reddit blocks server-side JSON with a 403, the UI now has a browser capture fallback: open the profile in your own browser, run the copied capture snippet, paste the copied JSON, and analyse that instead.
+This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON for profiles, submissions, and comments. If Reddit blocks server-side JSON with a 403, the UI has a browser capture fallback: open the profile in your own browser, run the copied capture snippet, paste the copied JSON, and analyse that instead.
 
-## What v0.1.2 does
+## What v0.1.3 does
 
 - Accepts a Reddit username, profile URL, or `u/username` value.
 - Tries public profile data from `about.json`.
@@ -13,6 +13,9 @@ This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON
 - Uses API-style headers first, then browser-style headers as a fallback.
 - Catches client-side fetch failures so the UI does not throw an unhandled rejection.
 - Adds a browser capture fallback for when Reddit blocks server-side JSON.
+- Auto-scrolls the Reddit profile during browser capture so virtualised posts are mounted into the DOM.
+- Dedupes browser-captured rows by Reddit post id/permalink.
+- Cleans incomplete browser rows where Reddit card wrappers expose the post title as the subreddit.
 - Shows partial import warnings if data cannot be imported.
 - Calculates a lightweight analytics report:
   - total recent posts/comments
@@ -49,7 +52,7 @@ Open `http://localhost:3000`.
 Copy `.env.example` to `.env.local` if you want to customise the Reddit request behaviour:
 
 ```bash
-REDDIT_USER_AGENT="web:paidpolitely.reddit-analytics:v0.1.1 (by /u/ptekspy)"
+REDDIT_USER_AGENT="web:paidpolitely.reddit-analytics:v0.1.2 (by /u/ptekspy)"
 REDDIT_BROWSER_USER_AGENT="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36"
 REDDIT_DEBUG="0"
 ```
@@ -88,13 +91,13 @@ type AnalyzeResponse = {
 ## Browser capture workflow
 
 1. Open the Reddit profile in your normal browser.
-2. In PaidPolitely, click **Copy capture snippet**.
+2. In PaidPolitely, click **Copy auto-scroll capture snippet**.
 3. Open DevTools on the Reddit page.
 4. Paste the snippet into the console and run it.
-5. The snippet copies a JSON payload to your clipboard.
+5. Leave the page alone while it scrolls down, captures mounted posts, returns to the starting position, and copies JSON to your clipboard.
 6. Paste that JSON into PaidPolitely and click **Analyse browser import**.
 
-This is the temporary v0.1.2 bridge. It gives us a user-assisted import path while we keep the main app free of Reddit OAuth.
+This is the temporary v0.1.3 bridge. It gives us a user-assisted import path while we keep the main app free of Reddit OAuth.
 
 ## Next iteration ideas
 
