@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { buildAccountAnalytics } from "@/lib/analytics";
+import { requireCurrentUser } from "@/lib/auth/session";
 import { BrowserImportError, parseBrowserImport } from "@/lib/browser-import";
 import { saveAccountScan } from "@/lib/db/scans";
 import { enqueuePlannerJobForScan } from "@/lib/planner/queue";
@@ -16,6 +17,9 @@ type ImportRequestBody = {
 };
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const user = await requireCurrentUser().catch(() => null);
+  if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
+
   let body: ImportRequestBody;
 
   try {
@@ -25,14 +29,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   if (typeof body.raw !== "string" || body.raw.trim().length === 0) {
-    return NextResponse.json<ErrorResponse>({ error: "Paste capture JSON first." }, { status: 400 });
+    return NextResponse.json<ErrorResponse>({ error: "Paste JSON first." }, { status: 400 });
   }
 
   try {
     const accountData = parseBrowserImport(body.raw);
     const analytics = buildAccountAnalytics(accountData);
-    const savedScan = await saveAccountScan(accountData, analytics);
-    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId);
+    const savedScan = await saveAccountScan(accountData, analytics, user.id);
+    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId, user.id);
 
     return NextResponse.json({
       profile: accountData.profile,
@@ -47,6 +51,6 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     }
 
     console.error(error);
-    return NextResponse.json<ErrorResponse>({ error: "Unable to analyse capture." }, { status: 500 });
+    return NextResponse.json<ErrorResponse>({ error: "Unable to analyse JSON." }, { status: 500 });
   }
 }
