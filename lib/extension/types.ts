@@ -13,10 +13,12 @@ export type ExtensionPingResponse = {
   error?: string;
 };
 
+export type ExtensionScanStatus = "captured" | "captured_headless";
+
 export type ExtensionScanResponse =
   | {
       ok: true;
-      status: "captured";
+      status: ExtensionScanStatus;
       payload: unknown;
     }
   | {
@@ -32,6 +34,8 @@ export type ExtensionMessage =
   | {
       type: "PAIDPOLITELY_SCAN_REDDIT_PROFILE";
       username: string;
+      preferHeadless?: boolean;
+      openInBackground?: boolean;
     };
 
 export type ChromeRuntime = {
