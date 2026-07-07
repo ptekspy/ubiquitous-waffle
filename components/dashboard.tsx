@@ -5,6 +5,7 @@ import { formatDate } from "@/utils/format-date";
 import { numberFormat } from "@/utils/number-format";
 import { ContentTypeList } from "./content-type-list";
 import { PanelHeading } from "./panel-heading";
+import { PlannerCard } from "./planner-card";
 import { StatCard } from "./stat-card";
 import { SubredditTable } from "./subreddit-table";
 import { Timeline } from "./timeline";
@@ -18,12 +19,14 @@ export function Dashboard({ data }: DashboardProps) {
   return (
     <section className="grid gap-[22px]">
       <WarningCard warnings={data.warnings} />
+      <PlannerCard initialJob={data.plannerJob} />
 
       <div className={`${cardClass} flex items-center justify-between gap-5 p-[26px] max-sm:flex-col max-sm:items-stretch`}>
         <div>
           <span className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]">Latest scan</span>
           <h2 className="my-2 text-[clamp(2rem,4vw,3.2rem)] font-black tracking-[-0.05em]">u/{data.profile.username}</h2>
           <p className={mutedClass}>Profile created {formatDate(data.profile.createdUtc)}</p>
+          {data.scanId ? <p className="mt-2 text-xs text-[#c9adbd]">Saved scan: {data.scanId}</p> : null}
         </div>
         <div className="min-w-[188px] rounded-3xl bg-linear-to-br from-[#ff4f91]/[0.22] to-[#ffb86b]/[0.22] p-[18px] text-right max-sm:text-left">
           <span className="block text-sm text-[#c9adbd]">Total karma</span>
@@ -71,35 +74,6 @@ export function Dashboard({ data }: DashboardProps) {
       <section className={`${cardClass} overflow-hidden p-6`}>
         <PanelHeading eyebrow="Momentum" title="Recent activity score" />
         <Timeline rows={data.analytics.timeline} />
-      </section>
-
-      <section className="grid gap-3.5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <article className={`${cardClass} overflow-hidden p-6`}>
-          <PanelHeading eyebrow="Repeat patterns" title="Top posts" />
-          <div className="grid gap-3">
-            {data.analytics.topPosts.map((post) => (
-              <a className="block rounded-2xl border border-white/12 bg-white/5 p-3.5 no-underline transition hover:border-[#ff4f91]/55" href={post.permalink} target="_blank" rel="noreferrer" key={post.id}>
-                <strong className="mb-1.5 block leading-snug">{post.title}</strong>
-                <span className="block text-sm text-[#c9adbd]">r/{post.subreddit} · {numberFormat(post.score)} score · {post.numComments} comments</span>
-              </a>
-            ))}
-          </div>
-        </article>
-        <article className={`${cardClass} overflow-hidden p-6`}>
-          <PanelHeading eyebrow="Conversation signal" title="Top comments" />
-          {data.analytics.topComments.length === 0 ? (
-            <p className={mutedClass}>No comments were captured in this browser import.</p>
-          ) : (
-            <div className="grid gap-3">
-              {data.analytics.topComments.map((comment) => (
-                <a className="block rounded-2xl border border-white/12 bg-white/5 p-3.5 no-underline transition hover:border-[#ff4f91]/55" href={comment.permalink} target="_blank" rel="noreferrer" key={comment.id}>
-                  <strong className="mb-1.5 block leading-snug">{comment.linkTitle ?? `Comment in r/${comment.subreddit}`}</strong>
-                  <span className="block text-sm text-[#c9adbd]">r/{comment.subreddit} · {numberFormat(comment.score)} score</span>
-                </a>
-              ))}
-            </div>
-          )}
-        </article>
       </section>
     </section>
   );
