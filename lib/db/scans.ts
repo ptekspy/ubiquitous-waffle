@@ -115,6 +115,13 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
         },
       });
 
+  if (ownerId) {
+    await prisma.user.update({
+      where: { id: ownerId },
+      data: { redditUsername: data.profile.username },
+    });
+  }
+
   const scan = await prisma.accountScan.create({
     data: {
       accountId: account.id,
