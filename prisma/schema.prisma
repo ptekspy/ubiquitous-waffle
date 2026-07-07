@@ -65,3 +65,71 @@ model AccountScan {
   @@index([accountId, fetchedAt])
   @@index([source])
 }
+
+model PostSnapshot {
+  id            String   @id @default(cuid())
+  scanId        String
+  accountId     String
+  redditId      String
+  title         String
+  subreddit     String
+  permalink     String
+  url           String?
+  createdUtc    Int
+  score         Int      @default(0)
+  numComments   Int      @default(0)
+  upvoteRatio   Float?
+  linkFlairText String?
+  over18        Boolean  @default(false)
+  isSelf        Boolean  @default(false)
+  domain        String?
+  postHint      String?
+  contentType   String
+  mediaKey      String?
+  createdAt     DateTime @default(now())
+
+  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@unique([scanId, redditId])
+  @@index([accountId, subreddit])
+  @@index([accountId, mediaKey])
+  @@index([createdUtc])
+}
+
+model CommentSnapshot {
+  id         String   @id @default(cuid())
+  scanId     String
+  accountId  String
+  redditId   String
+  body       String
+  subreddit  String
+  permalink  String
+  createdUtc Int
+  score      Int      @default(0)
+  linkTitle  String?
+  createdAt  DateTime @default(now())
+
+  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@unique([scanId, redditId])
+  @@index([accountId, subreddit])
+  @@index([createdUtc])
+}
+
+model SubredditSnapshot {
+  id                  String   @id @default(cuid())
+  scanId              String
+  accountId           String
+  subreddit           String
+  posts               Int      @default(0)
+  comments            Int      @default(0)
+  totalScore          Int      @default(0)
+  averagePostScore    Float    @default(0)
+  averageCommentScore Float    @default(0)
+  createdAt           DateTime @default(now())
+
+  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@unique([scanId, subreddit])
+  @@index([accountId, subreddit])
+}
