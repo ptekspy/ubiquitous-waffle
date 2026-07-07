@@ -2,6 +2,9 @@ import { NextRequest, NextResponse } from "next/server";
 
 import { enqueuePlannerJobForScan, getPlannerJob } from "@/lib/planner/queue";
 
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
+
 type ErrorResponse = {
   error: string;
 };
