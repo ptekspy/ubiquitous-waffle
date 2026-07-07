@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { buildAccountAnalytics } from "@/lib/analytics";
+import { saveAccountScan } from "@/lib/db/scans";
+import { enqueuePlannerJobForScan } from "@/lib/planner/queue";
 import { fetchRedditAccountData, RedditFetchError } from "@/lib/reddit";
 
 export const dynamic = "force-dynamic";
@@ -19,11 +21,15 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const accountData = await fetchRedditAccountData(username);
     const analytics = buildAccountAnalytics(accountData);
+    const savedScan = await saveAccountScan(accountData, analytics);
+    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId);
 
     return NextResponse.json({
       profile: accountData.profile,
       analytics,
       warnings: accountData.warnings,
+      scanId: savedScan.scanId,
+      plannerJob,
     });
   } catch (error) {
     if (error instanceof RedditFetchError) {
