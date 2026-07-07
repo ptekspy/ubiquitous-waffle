@@ -1,7 +1,8 @@
 import type { RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
 
-const REDDIT_BASE_URL = "https://www.reddit.com";
-const DEFAULT_USER_AGENT = "PaidPolitelyAnalytics/0.1.0 (+https://paidpolitely.com)";
+const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.1.1 (by /u/ptekspy)";
+const DEFAULT_BROWSER_USER_AGENT =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/149.0.0.0 Safari/537.36";
 const MAX_LISTING_ITEMS = 100;
 
 type RedditApiResponse<T> = {
@@ -54,10 +55,23 @@ type RawComment = {
   link_title?: string;
 };
 
+type FetchAttempt = {
+  label: string;
+  url: string;
+  headers: HeadersInit;
+};
+
+type FetchFailure = {
+  label: string;
+  status: number;
+  body: string;
+};
+
 export class RedditFetchError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly failures: FetchFailure[] = [],
   ) {
     super(message);
     this.name = "RedditFetchError";
@@ -80,29 +94,107 @@ export function normaliseUsername(input: string): string {
   return withoutUrl;
 }
 
-async function redditFetch<T>(path: string): Promise<T> {
-  const userAgent = process.env.REDDIT_USER_AGENT || DEFAULT_USER_AGENT;
-  const response = await fetch(`${REDDIT_BASE_URL}${path}`, {
-    cache: "no-store",
-    headers: {
-      Accept: "application/json",
-      "User-Agent": userAgent,
+function apiHeaders(): HeadersInit {
+  return {
+    Accept: "application/json",
+    "Accept-Language": "en-GB,en;q=0.9",
+    "User-Agent": process.env.REDDIT_USER_AGENT || DEFAULT_USER_AGENT,
+  };
+}
+
+function browserHeaders(): HeadersInit {
+  return {
+    Accept: "application/json,text/plain,*/*",
+    "Accept-Language": "en-GB,en;q=0.9",
+    Referer: "https://www.reddit.com/",
+    "User-Agent": process.env.REDDIT_BROWSER_USER_AGENT || DEFAULT_BROWSER_USER_AGENT,
+  };
+}
+
+function apiRedditPath(path: string): string {
+  return path.replace(/\.json(?=[?#]|$)/, "");
+}
+
+function buildFetchAttempts(path: string): FetchAttempt[] {
+  return [
+    {
+      label: "www.reddit.com api-style json",
+      url: `https://www.reddit.com${path}`,
+      headers: apiHeaders(),
     },
-  });
+    {
+      label: "www.reddit.com browser-style json",
+      url: `https://www.reddit.com${path}`,
+      headers: browserHeaders(),
+    },
+    {
+      label: "api.reddit.com api-style json",
+      url: `https://api.reddit.com${apiRedditPath(path)}`,
+      headers: apiHeaders(),
+    },
+    {
+      label: "api.reddit.com browser-style json",
+      url: `https://api.reddit.com${apiRedditPath(path)}`,
+      headers: browserHeaders(),
+    },
+  ];
+}
 
-  if (response.status === 404) {
-    throw new RedditFetchError("Reddit account not found or not publicly available.", 404);
+function errorMessageForStatus(status: number): string {
+  if (status === 403) {
+    return "Reddit blocked the public JSON request with a 403.";
   }
 
-  if (response.status === 429) {
-    throw new RedditFetchError("Reddit rate limited the request. Try again shortly.", 429);
+  if (status === 404) {
+    return "Reddit account not found or not publicly available.";
   }
 
-  if (!response.ok) {
-    throw new RedditFetchError(`Reddit returned ${response.status}.`, response.status);
+  if (status === 429) {
+    return "Reddit rate limited the request. Try again shortly.";
   }
 
-  return (await response.json()) as T;
+  return `Reddit returned ${status}.`;
+}
+
+async function redditFetch<T>(path: string): Promise<T> {
+  const failures: FetchFailure[] = [];
+
+  for (const attempt of buildFetchAttempts(path)) {
+    const response = await fetch(attempt.url, {
+      cache: "no-store",
+      headers: attempt.headers,
+    });
+
+    const body = await response.text();
+
+    if (!response.ok) {
+      failures.push({
+        label: attempt.label,
+        status: response.status,
+        body: body.slice(0, 240),
+      });
+      continue;
+    }
+
+    try {
+      return JSON.parse(body) as T;
+    } catch {
+      failures.push({
+        label: attempt.label,
+        status: 502,
+        body: body.slice(0, 240),
+      });
+    }
+  }
+
+  const lastFailure = failures.at(-1);
+  const status = lastFailure?.status ?? 500;
+
+  if (process.env.REDDIT_DEBUG === "1") {
+    console.warn("Reddit fetch failed", { path, failures });
+  }
+
+  throw new RedditFetchError(errorMessageForStatus(status), status, failures);
 }
 
 function toProfile(username: string, raw: RawProfile): RedditProfile {
@@ -151,14 +243,28 @@ function toComment(raw: RawComment): RedditComment {
   };
 }
 
-async function fetchListing<T>(username: string, listing: "submitted" | "comments"): Promise<T[]> {
+async function fetchListing<T>(username: string, listing: "submitted" | "comments"): Promise<{ items: T[]; warning: string | null }> {
   const params = new URLSearchParams({
     limit: String(MAX_LISTING_ITEMS),
     raw_json: "1",
   });
 
-  const response = await redditFetch<ListingResponse<T>>(`/user/${username}/${listing}.json?${params}`);
-  return response.data.children.map((child) => child.data);
+  try {
+    const response = await redditFetch<ListingResponse<T>>(`/user/${username}/${listing}.json?${params}`);
+    return {
+      items: response.data.children.map((child) => child.data),
+      warning: null,
+    };
+  } catch (error) {
+    if (error instanceof RedditFetchError && [403, 404, 429].includes(error.status)) {
+      return {
+        items: [],
+        warning: `${listing} import skipped: ${error.message}`,
+      };
+    }
+
+    throw error;
+  }
 }
 
 export async function fetchRedditAccountData(input: string): Promise<RedditAccountData> {
@@ -167,14 +273,15 @@ export async function fetchRedditAccountData(input: string): Promise<RedditAccou
     `/user/${username}/about.json?raw_json=1`,
   );
 
-  const [rawPosts, rawComments] = await Promise.all([
+  const [submitted, comments] = await Promise.all([
     fetchListing<RawPost>(username, "submitted"),
     fetchListing<RawComment>(username, "comments"),
   ]);
 
   return {
     profile: toProfile(username, profileResponse.data),
-    posts: rawPosts.map(toPost).filter((post) => post.createdUtc > 0),
-    comments: rawComments.map(toComment).filter((comment) => comment.createdUtc > 0),
+    posts: submitted.items.map(toPost).filter((post) => post.createdUtc > 0),
+    comments: comments.items.map(toComment).filter((comment) => comment.createdUtc > 0),
+    warnings: [submitted.warning, comments.warning].filter((warning): warning is string => Boolean(warning)),
   };
 }
