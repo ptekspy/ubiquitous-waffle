@@ -39,13 +39,28 @@ function StatCard({ label, value, detail }: { label: string; value: string; deta
 function EmptyState() {
   return (
     <section className="empty-card">
-      <p>Try a public Reddit username to generate a quick v0.1.0 account read.</p>
+      <p>Try a public Reddit username to generate a quick v0.1.1 account read.</p>
       <div className="example-row">
         <span>Public profile</span>
         <span>Recent posts</span>
         <span>Recent comments</span>
         <span>Subreddit signals</span>
       </div>
+    </section>
+  );
+}
+
+function WarningCard({ warnings }: { warnings: string[] }) {
+  if (warnings.length === 0) return null;
+
+  return (
+    <section className="warning-card">
+      <strong>Partial import</strong>
+      <ul>
+        {warnings.map((warning) => (
+          <li key={warning}>{warning}</li>
+        ))}
+      </ul>
     </section>
   );
 }
@@ -144,7 +159,7 @@ export default function Home() {
   return (
     <main>
       <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.1.0</div>
+        <div className="eyebrow">PaidPolitely v0.1.1</div>
         <h1>Reddit account analytics without OAuth.</h1>
         <p>
           Enter a Reddit username and get a lightweight account read from public profile, post, and comment JSON.
@@ -175,6 +190,8 @@ export default function Home() {
         <EmptyState />
       ) : (
         <section className="dashboard">
+          <WarningCard warnings={data.warnings} />
+
           <div className="profile-card">
             <div>
               <span className="eyebrow">Connected public profile</span>
