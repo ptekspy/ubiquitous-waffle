@@ -13,22 +13,48 @@ export const BROWSER_CAPTURE_SNIPPET = `(async () => {
   const subredditFromHref = (href) => href?.match(/\\/r\\/([^/]+)\\//i)?.[1] ?? "";
   const username = location.pathname.match(/\\/user\\/([^/]+)/i)?.[1] || location.pathname.match(/\\/u\\/([^/]+)/i)?.[1] || document.querySelector('[data-testid="profile-name"]')?.textContent?.replace(/^u\\//i, "") || "";
   const postsByKey = new Map();
+  const makeProgressBox = () => {
+    document.getElementById("paidpolitely-capture-progress")?.remove();
+    const box = document.createElement("div");
+    box.id = "paidpolitely-capture-progress";
+    box.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:2147483646;background:#120b16;color:#fff;border:1px solid #ff4f91;border-radius:14px;padding:12px 14px;font:13px system-ui;box-shadow:0 12px 40px rgba(0,0,0,.35);max-width:320px;";
+    document.body.append(box);
+    return (message) => { box.textContent = message; };
+  };
+  const setProgress = makeProgressBox();
   const visiblePostNodes = () => {
-    const shredditPosts = Array.from(document.querySelectorAll("shreddit-post"));
-    if (shredditPosts.length) return shredditPosts;
-    return Array.from(document.querySelectorAll('article, [data-testid="post-container"]'));
+    const seen = new Set();
+    const nodes = [];
+    const add = (node) => {
+      if (!node || seen.has(node)) return;
+      seen.add(node);
+      nodes.push(node);
+    };
+    document.querySelectorAll("shreddit-post").forEach(add);
+    document.querySelectorAll('[data-testid="post-container"]').forEach(add);
+    document.querySelectorAll("article").forEach((node) => {
+      if (node.querySelector('a[href*="/comments/"]')) add(node);
+    });
+    document.querySelectorAll('a[href*="/comments/"]').forEach((anchor) => {
+      add(anchor.closest("shreddit-post"));
+      add(anchor.closest('[data-testid="post-container"]'));
+      add(anchor.closest("article"));
+      add(anchor);
+    });
+    return nodes;
   };
   const captureVisiblePosts = () => {
     for (const [index, node] of visiblePostNodes().entries()) {
-      const href = node.getAttribute?.("permalink") || node.querySelector('a[href*="/comments/"]')?.getAttribute("href") || "";
+      const anchor = node.matches?.('a[href*="/comments/"]') ? node : node.querySelector?.('a[href*="/comments/"]');
+      const href = node.getAttribute?.("permalink") || anchor?.getAttribute("href") || "";
       const idFromHref = redditIdFromHref(href);
       const id = node.getAttribute?.("id") || (idFromHref ? "t3_" + idFromHref : "browser-post-" + index);
-      const title = text(node.querySelector('[slot="title"], a[slot="title"], h1, h2, h3')) || text(node.querySelector('a[href*="/comments/"]'));
+      const title = text(node.querySelector?.('[slot="title"], a[slot="title"], h1, h2, h3')) || text(anchor);
       const subredditAttribute = node.getAttribute?.("subreddit-prefixed-name") || node.getAttribute?.("subreddit") || "";
       const subreddit = subredditFromHref(href) || subredditAttribute.replace(/^r\\//i, "");
-      const score = numberFrom(node.getAttribute?.("score") || text(node.querySelector('[aria-label*="upvote"], [id*="score"], faceplate-number')));
-      const numComments = numberFrom(node.getAttribute?.("comment-count") || text(node.querySelector('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
-      const createdRaw = node.getAttribute?.("created-timestamp") || node.getAttribute?.("created") || node.querySelector("time")?.getAttribute("datetime") || "";
+      const score = numberFrom(node.getAttribute?.("score") || text(node.querySelector?.('[aria-label*="upvote"], [id*="score"], faceplate-number')));
+      const numComments = numberFrom(node.getAttribute?.("comment-count") || text(node.querySelector?.('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
+      const createdRaw = node.getAttribute?.("created-timestamp") || node.getAttribute?.("created") || node.querySelector?.("time")?.getAttribute("datetime") || "";
       const createdParsed = Date.parse(createdRaw);
       const createdUtc = Number.isFinite(createdParsed) ? Math.floor(createdParsed / 1000) : Math.floor(Date.now() / 1000);
       if (!title || !subreddit || !href) continue;
@@ -39,6 +65,28 @@ export const BROWSER_CAPTURE_SNIPPET = `(async () => {
         postsByKey.set(key, post);
       }
     }
+  };
+  const findScrollTarget = () => {
+    const candidates = [document.scrollingElement, document.documentElement, document.body, document.querySelector("main"), ...Array.from(document.querySelectorAll("main, shreddit-app, div, section"))]
+      .filter(Boolean)
+      .filter((element, index, array) => array.indexOf(element) === index)
+      .filter((element) => element.scrollHeight > element.clientHeight + 300)
+      .sort((a, b) => b.scrollHeight - a.scrollHeight);
+    const element = candidates[0] || document.scrollingElement || document.documentElement || document.body;
+    return {
+      element,
+      get top() { return element === document.body || element === document.documentElement || element === document.scrollingElement ? window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0 : element.scrollTop; },
+      set top(value) {
+        if (element === document.body || element === document.documentElement || element === document.scrollingElement) window.scrollTo(0, value);
+        else element.scrollTop = value;
+      },
+      get height() { return element.scrollHeight || document.body.scrollHeight; },
+      get clientHeight() { return element === document.body || element === document.documentElement || element === document.scrollingElement ? window.innerHeight : element.clientHeight; },
+      fireScroll() {
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+        window.dispatchEvent(new Event("scroll"));
+      }
+    };
   };
   const showManualCopyBox = (json) => {
     document.getElementById("paidpolitely-capture-output")?.remove();
@@ -73,30 +121,44 @@ export const BROWSER_CAPTURE_SNIPPET = `(async () => {
       return false;
     }
   };
-  const startingScrollY = window.scrollY;
+  const scroller = findScrollTarget();
+  const startingScrollY = scroller.top;
   let lastHeight = 0;
   let lastCount = 0;
-  let unchangedPasses = 0;
-  window.scrollTo(0, 0);
-  await sleep(600);
+  let unchangedNearBottomPasses = 0;
+  scroller.top = 0;
+  scroller.fireScroll();
+  await sleep(1200);
   captureVisiblePosts();
-  for (let pass = 0; pass < 90 && unchangedPasses < 5; pass += 1) {
-    window.scrollBy(0, Math.max(700, window.innerHeight * 0.85));
-    await sleep(650);
+  for (let pass = 0; pass < 180 && unchangedNearBottomPasses < 8; pass += 1) {
+    const step = Math.max(550, Math.floor(scroller.clientHeight * 0.65));
+    const beforeTop = scroller.top;
+    const maxTop = Math.max(0, scroller.height - scroller.clientHeight);
+    scroller.top = Math.min(maxTop, beforeTop + step);
+    scroller.fireScroll();
+    window.dispatchEvent(new WheelEvent("wheel", { deltaY: step, bubbles: true, cancelable: true }));
+    await sleep(1100);
     captureVisiblePosts();
-    const height = document.scrollingElement?.scrollHeight || document.body.scrollHeight;
+    const currentTop = scroller.top;
+    const currentHeight = scroller.height;
     const count = postsByKey.size;
-    if (height === lastHeight && count === lastCount) unchangedPasses += 1;
-    else unchangedPasses = 0;
-    lastHeight = height;
+    const nearBottom = currentTop + scroller.clientHeight >= currentHeight - 900;
+    setProgress("PaidPolitely capturing Reddit posts: " + count + " found, pass " + (pass + 1) + ", " + (nearBottom ? "near bottom" : "scrolling"));
+    if (nearBottom && currentHeight === lastHeight && count === lastCount) unchangedNearBottomPasses += 1;
+    else unchangedNearBottomPasses = 0;
+    if (currentTop === beforeTop && !nearBottom) unchangedNearBottomPasses += 1;
+    lastHeight = currentHeight;
     lastCount = count;
   }
-  window.scrollTo(0, 0);
-  await sleep(500);
+  scroller.top = 0;
+  scroller.fireScroll();
+  await sleep(900);
   captureVisiblePosts();
-  window.scrollTo(0, startingScrollY);
+  scroller.top = startingScrollY;
+  scroller.fireScroll();
+  document.getElementById("paidpolitely-capture-progress")?.remove();
   const payload = {
-    source: "paidpolitely-reddit-browser-import-v3",
+    source: "paidpolitely-reddit-browser-import-v4",
     capturedAt: new Date().toISOString(),
     username,
     profile: { username },
