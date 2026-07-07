@@ -1,6 +1,7 @@
 const REDDIT_PROFILE_URL = "https://www.reddit.com/user/{username}/submitted/";
 const OVERLAY_TIMEOUT_MS = 10 * 60 * 1000;
 const TAB_LOAD_TIMEOUT_MS = 45 * 1000;
+const REDDIT_JSON_LIMIT = 100;
 
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   handleMessage(message, sender)
@@ -45,7 +46,10 @@ async function handleMessage(message) {
       return { ok: false, status: "bad_username", error: "PaidPolitely needs a valid Reddit username." };
     }
 
-    return scanRedditProfile(username, { openInBackground: message.openInBackground !== false });
+    return scanRedditProfile(username, {
+      preferHeadless: message.preferHeadless !== false,
+      openInBackground: message.openInBackground !== false,
+    });
   }
 
   return { ok: false, status: "unknown_message", error: `Unsupported PaidPolitely message: ${message.type}` };
@@ -56,7 +60,195 @@ function normaliseUsername(value) {
   return /^[A-Za-z0-9_-]{3,20}$/.test(username) ? username : "";
 }
 
-async function scanRedditProfile(username, options = { openInBackground: true }) {
+async function scanRedditProfile(username, options = { preferHeadless: true, openInBackground: true }) {
+  if (options.preferHeadless) {
+    const headlessResult = await scanRedditProfileWithoutTab(username);
+    if (headlessResult.ok) return headlessResult;
+  }
+
+  return scanRedditProfileFromTab(username, { openInBackground: options.openInBackground });
+}
+
+async function scanRedditProfileWithoutTab(username) {
+  const aboutUrl = `https://www.reddit.com/user/${encodeURIComponent(username)}/about.json?raw_json=1`;
+  const submittedUrl = `https://www.reddit.com/user/${encodeURIComponent(username)}/submitted.json?limit=${REDDIT_JSON_LIMIT}&raw_json=1`;
+  const commentsUrl = `https://www.reddit.com/user/${encodeURIComponent(username)}/comments.json?limit=${REDDIT_JSON_LIMIT}&raw_json=1`;
+
+  const [aboutResult, submittedResult, commentsResult] = await Promise.all([
+    fetchRedditJson(aboutUrl),
+    fetchRedditJson(submittedUrl),
+    fetchRedditJson(commentsUrl),
+  ]);
+
+  if (!submittedResult.ok && !commentsResult.ok) {
+    return {
+      ok: false,
+      status: "headless_blocked",
+      error: "Reddit blocked extension JSON fetches, so PaidPolitely will use the quiet tab scanner instead.",
+    };
+  }
+
+  const profile = aboutResult.ok ? toHeadlessProfile(aboutResult.data, username) : fallbackProfile(username);
+  const posts = submittedResult.ok ? extractListingChildren(submittedResult.data).map(toHeadlessPost).filter(Boolean) : [];
+  const comments = commentsResult.ok ? extractListingChildren(commentsResult.data).map(toHeadlessComment).filter(Boolean) : [];
+
+  if (posts.length === 0 && comments.length === 0) {
+    return {
+      ok: false,
+      status: "headless_empty",
+      error: "Reddit JSON was reachable, but did not contain usable account rows. PaidPolitely will use the quiet tab scanner instead.",
+    };
+  }
+
+  return {
+    ok: true,
+    status: "captured_headless",
+    payload: {
+      source: "paidpolitely-reddit-extension-headless-v1",
+      capturedAt: new Date().toISOString(),
+      username,
+      profile,
+      posts,
+      comments,
+    },
+  };
+}
+
+async function fetchRedditJson(url) {
+  try {
+    const response = await fetch(url, {
+      method: "GET",
+      credentials: "include",
+      cache: "no-store",
+      headers: {
+        accept: "application/json,text/plain,*/*",
+      },
+    });
+
+    if (!response.ok) {
+      return { ok: false, status: response.status, error: `Reddit returned HTTP ${response.status}.` };
+    }
+
+    const data = await response.json();
+    return { ok: true, data };
+  } catch (error) {
+    return { ok: false, status: "fetch_failed", error: error?.message || "Reddit JSON fetch failed." };
+  }
+}
+
+function extractListingChildren(value) {
+  const children = value?.data?.children;
+  return Array.isArray(children) ? children : [];
+}
+
+function fallbackProfile(username) {
+  return {
+    id: username,
+    username,
+    createdUtc: null,
+    totalKarma: 0,
+    linkKarma: 0,
+    commentKarma: 0,
+    over18: false,
+    iconUrl: null,
+  };
+}
+
+function toHeadlessProfile(value, fallbackUsername) {
+  const data = value?.data || {};
+  const username = normaliseUsername(data.name || fallbackUsername) || fallbackUsername;
+  const linkKarma = asNumber(data.link_karma, 0);
+  const commentKarma = asNumber(data.comment_karma, 0);
+
+  return {
+    id: String(data.id || username),
+    username,
+    createdUtc: asNumber(data.created_utc, 0) || null,
+    totalKarma: asNumber(data.total_karma, linkKarma + commentKarma),
+    linkKarma,
+    commentKarma,
+    over18: Boolean(data.over_18),
+    iconUrl: typeof data.icon_img === "string" && data.icon_img.length > 0 ? data.icon_img : null,
+  };
+}
+
+function toHeadlessPost(child) {
+  if (child?.kind !== "t3") return null;
+  const data = child.data || {};
+  const permalink = canonicalRedditUrl(data.permalink);
+  const subreddit = String(data.subreddit || "").replace(/^r\//i, "");
+  const title = String(data.title || "").trim();
+
+  if (!title || !subreddit || !permalink) return null;
+  if (isGameOrPromoRow({ title, subreddit, permalink, score: asNumber(data.score, 0), numComments: asNumber(data.num_comments, 0), id: String(data.name || data.id || "") })) return null;
+
+  return {
+    id: String(data.name || (data.id ? `t3_${data.id}` : permalink)),
+    title,
+    subreddit,
+    permalink,
+    url: typeof data.url === "string" && data.url.length > 0 ? data.url : null,
+    createdUtc: asNumber(data.created_utc, Math.floor(Date.now() / 1000)),
+    score: asNumber(data.score, 0),
+    numComments: asNumber(data.num_comments, 0),
+    postHint: typeof data.post_hint === "string" ? data.post_hint : null,
+  };
+}
+
+function toHeadlessComment(child) {
+  if (child?.kind !== "t1") return null;
+  const data = child.data || {};
+  const body = String(data.body || "").trim();
+  const subreddit = String(data.subreddit || "").replace(/^r\//i, "");
+
+  if (!body || !subreddit) return null;
+
+  return {
+    id: String(data.name || (data.id ? `t1_${data.id}` : canonicalRedditUrl(data.permalink))),
+    body,
+    subreddit,
+    permalink: canonicalRedditUrl(data.permalink),
+    createdUtc: asNumber(data.created_utc, Math.floor(Date.now() / 1000)),
+    score: asNumber(data.score, 0),
+    linkTitle: typeof data.link_title === "string" && data.link_title.length > 0 ? data.link_title : null,
+  };
+}
+
+function canonicalRedditUrl(value) {
+  const raw = String(value || "").trim();
+  if (!raw) return "";
+  const absolute = raw.startsWith("https://") ? raw : raw.startsWith("/") ? `https://www.reddit.com${raw}` : `https://www.reddit.com/${raw}`;
+
+  try {
+    const url = new URL(absolute);
+    return `${url.origin}${url.pathname.replace(/\/$/, "")}`;
+  } catch {
+    return absolute.split(/[?#]/)[0].replace(/\/$/, "");
+  }
+}
+
+function asNumber(value, fallback = 0) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string") {
+    const parsed = Number.parseFloat(value.replace(/,/g, ""));
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function isGameOrPromoRow({ title, subreddit, permalink, score, numComments, id }) {
+  const lowerPermalink = String(permalink || "").toLowerCase();
+  const lowerSubreddit = String(subreddit || "").toLowerCase();
+  const lowerTitle = String(title || "").trim().toLowerCase();
+
+  if (lowerPermalink.includes("entry_point=games_drawer") || lowerPermalink.includes("/r/colorpuzzlegame/")) return true;
+  if (lowerSubreddit === "colorpuzzlegame" && lowerTitle === "color puzzle") return true;
+  if (String(id || "").startsWith("browser-post-") && score >= 100000 && numComments === 0) return true;
+
+  return false;
+}
+
+async function scanRedditProfileFromTab(username, options = { openInBackground: true }) {
   const tab = await findOrOpenRedditProfileTab(username, { active: !options.openInBackground });
   await waitForTabLoad(tab.id);
   await delay(1000);
@@ -299,12 +491,7 @@ async function captureRedditProfileInPage(expectedUsername) {
     const lower = String(href || "").toLowerCase();
     return lower.includes("entry_point=games_drawer") || lower.includes("/r/colorpuzzlegame/");
   };
-  const isGameOrPromoPost = ({ title, subreddit, href, score, numComments, id }) => {
-    if (isGameOrPromoHref(href)) return true;
-    if (String(subreddit || "").toLowerCase() === "colorpuzzlegame" && String(title || "").trim().toLowerCase() === "color puzzle") return true;
-    if (String(id || "").startsWith("browser-post-") && score >= 100000 && numComments === 0) return true;
-    return false;
-  };
+  const isGameOrPromoPost = ({ title, subreddit, href, score, numComments, id }) => isGameOrPromoRow({ title, subreddit, permalink: href, score, numComments, id });
   const username =
     String(expectedUsername || "") ||
     location.pathname.match(/\/user\/([^/]+)/i)?.[1] ||
