@@ -13,10 +13,11 @@ enum PlannerJobStatus {
   FAILED
 }
 
-model Account {
+model RedditAccount {
   id           String   @id @default(cuid())
+  ownerUserId  String?
   redditId     String?
-  username     String   @unique
+  username     String
   createdUtc   Int?
   totalKarma   Int      @default(0)
   linkKarma    Int      @default(0)
@@ -31,7 +32,10 @@ model Account {
   scans       AccountScan[]
   plannerJobs PlannerJob[]
 
+  @@unique([ownerUserId, username])
+  @@index([ownerUserId])
   @@index([username])
+  @@map("Account")
 }
 
 model AccountScan {
@@ -55,7 +59,7 @@ model AccountScan {
   analytics           Json
   createdAt           DateTime @default(now())
 
-  account              Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account              RedditAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
   postSnapshots        PostSnapshot[]
   commentSnapshots     CommentSnapshot[]
   subredditSnapshots   SubredditSnapshot[]
@@ -169,8 +173,8 @@ model PlannerJob {
   createdAt   DateTime         @default(now())
   updatedAt   DateTime         @updatedAt
 
-  account Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  scan    AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  account RedditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scan    AccountScan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
   @@index([accountId, createdAt])
