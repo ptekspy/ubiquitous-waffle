@@ -1,4 +1,4 @@
-import type { RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
+import type { JsonObject, RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
 
 type BrowserImportPost = {
   id?: unknown;
@@ -40,6 +40,7 @@ type BrowserImportPayload = {
   username?: unknown;
   posts?: BrowserImportPost[];
   comments?: BrowserImportComment[];
+  metadata?: unknown;
 };
 
 export class BrowserImportError extends Error {
@@ -66,6 +67,11 @@ function asNumber(value: unknown, fallback = 0): number {
 
 function asBoolean(value: unknown, fallback = false): boolean {
   return typeof value === "boolean" ? value : fallback;
+}
+
+function asJsonObject(value: unknown): JsonObject | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as JsonObject;
 }
 
 function absoluteRedditUrl(value: unknown): string {
@@ -245,16 +251,16 @@ export function parseBrowserImport(raw: string): RedditAccountData {
   const payload = parsePayload(raw);
   const profile = toProfile(payload);
   const rawPosts = Array.isArray(payload.posts) ? payload.posts : [];
+  const rawComments = Array.isArray(payload.comments) ? payload.comments : [];
   const rawPostCount = rawPosts.length;
+  const rawCommentCount = rawComments.length;
   const commentPermalinkRows = rawPosts.filter((post) => isCommentPermalink(post.permalink)).length;
   const gameOrPromoRows = rawPosts.filter(isRedditGameOrPromoRow).length;
   const parsedPosts = rawPosts
     .map((post, index) => toPost(post, index, profile.username))
     .filter((post): post is RedditPost => Boolean(post));
   const posts = dedupePosts(parsedPosts);
-  const comments = Array.isArray(payload.comments)
-    ? payload.comments.map(toComment).filter((comment): comment is RedditComment => Boolean(comment))
-    : [];
+  const comments = rawComments.map(toComment).filter((comment): comment is RedditComment => Boolean(comment));
   const removedPostRows = rawPostCount - posts.length;
 
   if (posts.length === 0 && comments.length === 0) {
@@ -265,6 +271,11 @@ export function parseBrowserImport(raw: string): RedditAccountData {
     profile,
     posts,
     comments,
+    source: asString(payload.source, "browser-import"),
+    capturedAt: asString(payload.capturedAt) || null,
+    metadata: asJsonObject(payload.metadata),
+    rawPostCount,
+    rawCommentCount,
     warnings: [
       "Imported from browser capture because Reddit blocked server-side public JSON.",
       removedPostRows > 0 ? `Cleaned ${removedPostRows} duplicate, game/promo, comment-link, or incomplete browser post rows.` : null,
