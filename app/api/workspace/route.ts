@@ -40,6 +40,7 @@ export async function PATCH(request: NextRequest): Promise<NextResponse> {
     return NextResponse.json<ErrorResponse>({ error: "Enter a valid Reddit username." }, { status: 400 });
   }
 
-  const settings = await updateWorkspaceRedditUsername(user.id, redditUsername);
-  return NextResponse.json({ settings });
+  await updateWorkspaceRedditUsername(user.id, redditUsername);
+  const workspace = await getWorkspaceForUser(user.id);
+  return NextResponse.json(workspace);
 }
