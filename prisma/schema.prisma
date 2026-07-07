@@ -13,6 +13,13 @@ enum PlannerJobStatus {
   FAILED
 }
 
+enum PostDeepDiveJobStatus {
+  QUEUED
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
 model User {
   id             String    @id
   name           String
@@ -23,9 +30,10 @@ model User {
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
 
-  sessions       Session[]
-  authAccounts   Account[]
-  redditAccounts RedditAccount[]
+  sessions         Session[]
+  authAccounts     Account[]
+  redditAccounts   RedditAccount[]
+  postDeepDiveJobs PostDeepDiveJob[]
 
   @@map("user")
 }
@@ -77,6 +85,26 @@ model Verification {
 
   @@index([identifier])
   @@map("verification")
+}
+
+model Subreddit {
+  id                String   @id @default(cuid())
+  name              String   @unique
+  displayName       String?
+  title             String?
+  publicDescription String?
+  over18            Boolean?
+  subscribers       Int?
+  iconUrl           String?
+  createdUtc        Int?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  postSnapshots      PostSnapshot[]
+  commentSnapshots   CommentSnapshot[]
+  subredditSnapshots SubredditSnapshot[]
+
+  @@index([name])
 }
 
 model RedditAccount {
@@ -138,52 +166,68 @@ model AccountScan {
 }
 
 model PostSnapshot {
-  id            String   @id @default(cuid())
-  scanId        String
-  accountId     String
-  redditId      String
-  title         String
-  subreddit     String
-  permalink     String
-  url           String?
-  createdUtc    Int
-  score         Int      @default(0)
-  numComments   Int      @default(0)
-  upvoteRatio   Float?
-  linkFlairText String?
-  over18        Boolean  @default(false)
-  isSelf        Boolean  @default(false)
-  domain        String?
-  postHint      String?
-  contentType   String
-  mediaKey      String?
-  createdAt     DateTime @default(now())
+  id                   String   @id @default(cuid())
+  scanId               String
+  accountId            String
+  subredditId          String?
+  redditId             String
+  title                String
+  subreddit            String
+  permalink            String
+  url                  String?
+  createdUtc           Int
+  score                Int      @default(0)
+  numComments          Int      @default(0)
+  upvoteRatio          Float?
+  linkFlairText        String?
+  over18               Boolean  @default(false)
+  isSelf               Boolean  @default(false)
+  domain               String?
+  postHint             String?
+  contentType          String
+  mediaKey             String?
+  deepDiveStatus       String   @default("PENDING")
+  deepDiveFetchedAt    DateTime?
+  refreshedScore       Int?
+  refreshedNumComments Int?
+  refreshedUpvoteRatio Float?
+  estimatedUpvotes     Int?
+  estimatedDownvotes   Int?
+  createdAt            DateTime @default(now())
 
-  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scan           AccountScan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  subredditRow   Subreddit?           @relation(fields: [subredditId], references: [id], onDelete: SetNull)
+  metricSnapshots PostMetricSnapshot[]
+  threadComments  PostThreadComment[]
+  deepDiveJobs     PostDeepDiveJob[]
 
   @@unique([scanId, redditId])
   @@index([accountId, subreddit])
   @@index([accountId, mediaKey])
+  @@index([subredditId])
   @@index([createdUtc])
 }
 
 model CommentSnapshot {
-  id         String   @id @default(cuid())
-  scanId     String
-  accountId  String
-  redditId   String
-  body       String
-  subreddit  String
-  permalink  String
-  createdUtc Int
-  score      Int      @default(0)
-  linkTitle  String?
-  createdAt  DateTime @default(now())
+  id          String   @id @default(cuid())
+  scanId      String
+  accountId   String
+  subredditId String?
+  redditId    String
+  body        String
+  subreddit   String
+  permalink   String
+  createdUtc  Int
+  score       Int      @default(0)
+  linkTitle   String?
+  createdAt   DateTime @default(now())
 
-  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scan         AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  subredditRow Subreddit?  @relation(fields: [subredditId], references: [id], onDelete: SetNull)
 
   @@unique([scanId, redditId])
   @@index([accountId, subreddit])
+  @@index([subredditId])
   @@index([createdUtc])
 }
 
@@ -191,6 +235,7 @@ model SubredditSnapshot {
   id                  String   @id @default(cuid())
   scanId              String
   accountId           String
+  subredditId         String?
   subreddit           String
   posts               Int      @default(0)
   comments            Int      @default(0)
@@ -199,10 +244,12 @@ model SubredditSnapshot {
   averageCommentScore Float    @default(0)
   createdAt           DateTime @default(now())
 
-  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  scan         AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  subredditRow Subreddit?  @relation(fields: [subredditId], references: [id], onDelete: SetNull)
 
   @@unique([scanId, subreddit])
   @@index([accountId, subreddit])
+  @@index([subredditId])
 }
 
 model MediaGroup {
@@ -222,6 +269,66 @@ model MediaGroup {
 
   @@unique([scanId, mediaKey])
   @@index([accountId, totalScore])
+}
+
+model PostMetricSnapshot {
+  id                 String   @id @default(cuid())
+  postSnapshotId     String
+  score              Int      @default(0)
+  numComments        Int      @default(0)
+  upvoteRatio        Float?
+  estimatedUpvotes   Int?
+  estimatedDownvotes Int?
+  capturedAt         DateTime @default(now())
+
+  post PostSnapshot @relation(fields: [postSnapshotId], references: [id], onDelete: Cascade)
+
+  @@index([postSnapshotId, capturedAt])
+}
+
+model PostThreadComment {
+  id             String   @id @default(cuid())
+  postSnapshotId String
+  redditId       String
+  parentRedditId String?
+  author         String?
+  body           String
+  subreddit      String
+  permalink      String?
+  createdUtc     Int
+  score          Int      @default(0)
+  depth          Int      @default(0)
+  isSubmitter    Boolean  @default(false)
+  distinguished  String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  post PostSnapshot @relation(fields: [postSnapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([postSnapshotId, redditId])
+  @@index([postSnapshotId, score])
+  @@index([author])
+}
+
+model PostDeepDiveJob {
+  id             String                @id @default(cuid())
+  ownerUserId    String?
+  postSnapshotId String
+  status         PostDeepDiveJobStatus @default(QUEUED)
+  attempts       Int                   @default(0)
+  error          String?
+  lockedAt       DateTime?
+  startedAt      DateTime?
+  completedAt    DateTime?
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
+
+  owner User?        @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  post  PostSnapshot @relation(fields: [postSnapshotId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([ownerUserId, createdAt])
+  @@index([postSnapshotId])
 }
 
 model PlannerJob {
