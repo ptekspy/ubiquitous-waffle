@@ -143,6 +143,41 @@ async function buildPlannerPrompt(scanId: string): Promise<string> {
   ].join("\n\n");
 }
 
+export async function enqueuePlannerJobForScan(scanId: string): Promise<PlannerJobSummary> {
+  const existing = await prisma.plannerJob.findFirst({
+    where: {
+      scanId,
+      status: {
+        in: ["QUEUED", "RUNNING", "COMPLETED"],
+      },
+    },
+    orderBy: { createdAt: "desc" },
+  });
+
+  if (existing) return toPlannerJobSummary(existing);
+
+  const scan = await prisma.accountScan.findUnique({
+    where: { id: scanId },
+    select: { accountId: true },
+  });
+
+  if (!scan) {
+    throw new Error("Cannot enqueue planner job because the scan does not exist.");
+  }
+
+  const prompt = await buildPlannerPrompt(scanId);
+  const job = await prisma.plannerJob.create({
+    data: {
+      accountId: scan.accountId,
+      scanId,
+      prompt,
+      status: "QUEUED",
+    },
+  });
+
+  return toPlannerJobSummary(job);
+}
+
 export async function getPlannerJob(jobId: string): Promise<PlannerJobSummary | null> {
   const job = await prisma.plannerJob.findUnique({ where: { id: jobId } });
   return job ? toPlannerJobSummary(job) : null;
