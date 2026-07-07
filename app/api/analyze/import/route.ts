@@ -1,0 +1,46 @@
+import { NextRequest, NextResponse } from "next/server";
+
+import { buildAccountAnalytics } from "@/lib/analytics";
+import { BrowserImportError, parseBrowserImport } from "@/lib/browser-import";
+
+export const dynamic = "force-dynamic";
+
+type ErrorResponse = {
+  error: string;
+};
+
+type ImportRequestBody = {
+  raw?: unknown;
+};
+
+export async function POST(request: NextRequest): Promise<NextResponse> {
+  let body: ImportRequestBody;
+
+  try {
+    body = (await request.json()) as ImportRequestBody;
+  } catch {
+    return NextResponse.json<ErrorResponse>({ error: "Request body must be JSON." }, { status: 400 });
+  }
+
+  if (typeof body.raw !== "string" || body.raw.trim().length === 0) {
+    return NextResponse.json<ErrorResponse>({ error: "Paste browser capture JSON first." }, { status: 400 });
+  }
+
+  try {
+    const accountData = parseBrowserImport(body.raw);
+    const analytics = buildAccountAnalytics(accountData);
+
+    return NextResponse.json({
+      profile: accountData.profile,
+      analytics,
+      warnings: accountData.warnings,
+    });
+  } catch (error) {
+    if (error instanceof BrowserImportError) {
+      return NextResponse.json<ErrorResponse>({ error: error.message }, { status: 400 });
+    }
+
+    console.error(error);
+    return NextResponse.json<ErrorResponse>({ error: "Unable to analyse browser import." }, { status: 500 });
+  }
+}
