@@ -105,7 +105,7 @@ export default function Home() {
     setState("loading");
     setError(null);
     setExtensionState("scanning");
-    setExtensionMessage(`Opening or focusing Reddit for u/${normalisedUsername}. If Reddit asks for login or age confirmation, follow the signpost in that tab.`);
+    setExtensionMessage(`Opening Reddit quietly for u/${normalisedUsername}. It will only come to the front if Reddit needs login, age confirmation, or troubleshooting.`);
 
     try {
       const response = await sendExtensionMessage<ExtensionScanResponse>({
