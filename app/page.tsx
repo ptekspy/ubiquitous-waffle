@@ -8,6 +8,7 @@ import type { AnalyzeResponse, ContentTypeMetric, SubredditMetric, TimelinePoint
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
 type ExtensionState = "not-configured" | "checking" | "missing" | "installed" | "scanning" | "error";
+type StepState = "done" | "active" | "todo" | "error";
 
 type ExtensionPingResponse = {
   ok?: boolean;
@@ -77,6 +78,10 @@ function normaliseUsernameInput(value: string): string {
     .replace(/^@/, "")
     .split(/[/?#]/)[0]
     .trim();
+}
+
+function validUsername(value: string): boolean {
+  return /^[A-Za-z0-9_-]{3,20}$/.test(normaliseUsernameInput(value));
 }
 
 async function readJsonResponse(response: Response): Promise<AnalyzeResponse | { error: string }> {
@@ -152,6 +157,15 @@ async function sendExtensionMessage<TResponse>(message: unknown): Promise<TRespo
   }
 }
 
+function extensionLabel(state: ExtensionState, version: string | null): string {
+  if (state === "installed") return `Extension ready${version ? ` · v${version}` : ""}`;
+  if (state === "scanning") return "Scanning Reddit";
+  if (state === "checking") return "Checking extension";
+  if (state === "missing") return "Extension not detected";
+  if (state === "not-configured") return "Extension not configured";
+  return "Extension error";
+}
+
 function StatCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <article className="stat-card">
@@ -162,16 +176,27 @@ function StatCard({ label, value, detail }: { label: string; value: string; deta
   );
 }
 
+function JourneyStep({ number, title, body, state }: { number: number; title: string; body: string; state: StepState }) {
+  return (
+    <li className={`journey-step journey-${state}`}>
+      <span>{state === "done" ? "✓" : number}</span>
+      <div>
+        <strong>{title}</strong>
+        <small>{body}</small>
+      </div>
+    </li>
+  );
+}
+
 function EmptyState() {
   return (
     <section className="empty-card">
-      <p>Try a public Reddit username first. If Reddit blocks the server request, use the browser capture fallback below.</p>
-      <div className="example-row">
-        <span>Public profile</span>
-        <span>Recent posts</span>
-        <span>Extension bridge</span>
-        <span>Subreddit signals</span>
-      </div>
+      <span className="eyebrow">Waiting for first scan</span>
+      <h2>Run the extension scan to build the dashboard.</h2>
+      <p>
+        The extension uses the normal Reddit tab in your browser, then imports only the visible public post metadata into this
+        page. No passwords, cookies, OAuth tokens, session tokens, or private messages are read.
+      </p>
     </section>
   );
 }
@@ -181,7 +206,7 @@ function WarningCard({ warnings }: { warnings: string[] }) {
 
   return (
     <section className="warning-card">
-      <strong>Partial import</strong>
+      <strong>Import notes</strong>
       <ul>
         {warnings.map((warning) => (
           <li key={warning}>{warning}</li>
@@ -191,81 +216,103 @@ function WarningCard({ warnings }: { warnings: string[] }) {
   );
 }
 
-function ExtensionBridgeCard({
-  state,
-  message,
-  version,
+function ScanSetupCard({
   username,
+  setUsername,
+  extensionState,
+  extensionMessage,
+  extensionVersion,
+  hasData,
   loading,
   onCheck,
   onScan,
+  onTryPublicJson,
 }: {
-  state: ExtensionState;
-  message: string;
-  version: string | null;
   username: string;
+  setUsername: (value: string) => void;
+  extensionState: ExtensionState;
+  extensionMessage: string;
+  extensionVersion: string | null;
+  hasData: boolean;
   loading: boolean;
   onCheck: () => void;
   onScan: () => void;
+  onTryPublicJson: () => void;
 }) {
   const normalisedUsername = normaliseUsernameInput(username);
-  const canScan = state === "installed" && !loading && normalisedUsername.length > 0;
-  const statusLabel =
-    state === "installed"
-      ? `Installed${version ? ` · v${version}` : ""}`
-      : state === "scanning"
-        ? "Scanning Reddit"
-        : state === "checking"
-          ? "Checking"
-          : state === "missing"
-            ? "Not detected"
-            : state === "not-configured"
-              ? "Extension ID needed"
-              : "Extension error";
+  const hasValidUsername = validUsername(username);
+  const extensionReady = extensionState === "installed";
+  const canScan = extensionReady && hasValidUsername && !loading;
+  const extensionStepState: StepState = extensionReady ? "done" : extensionState === "missing" || extensionState === "error" ? "error" : "active";
+  const usernameStepState: StepState = hasValidUsername ? "done" : extensionReady ? "active" : "todo";
+  const captureStepState: StepState = extensionState === "scanning" || loading ? "active" : hasData ? "done" : canScan ? "active" : "todo";
+  const reviewStepState: StepState = hasData ? "done" : "todo";
+
+  function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (canScan) onScan();
+  }
 
   return (
-    <section className="extension-card">
-      <div className="extension-card-header">
-        <div>
-          <span className="eyebrow">One-click browser scan</span>
-          <h2>PaidPolitely Capture extension</h2>
+    <section className="journey-card">
+      <div className="journey-copy">
+        <span className="eyebrow">Recommended flow</span>
+        <h2>Scan a Reddit profile with the browser extension.</h2>
+        <p>
+          PaidPolitely opens or focuses the Reddit profile, checks it is visible, captures the public post rows, removes Reddit
+          promo/game cards, and builds the report here.
+        </p>
+        <div className={`bridge-banner bridge-${extensionState}`}>
+          <span className="bridge-dot" />
+          <div>
+            <strong>{extensionLabel(extensionState, extensionVersion)}</strong>
+            <small>{extensionMessage}</small>
+          </div>
+          <button type="button" onClick={onCheck} disabled={extensionState === "checking" || extensionState === "scanning"}>
+            {extensionState === "checking" ? "Checking..." : "Recheck"}
+          </button>
         </div>
-        <span className={`status-pill status-${state}`}>{statusLabel}</span>
       </div>
-      <p>
-        The website checks for the installed extension through a local content-script bridge. If it is installed, it can open
-        or focus the Reddit profile tab, signpost the user if Reddit needs login/age confirmation, scan visible post metadata,
-        and import the result here.
-      </p>
-      {message ? <p className="bridge-message">{message}</p> : null}
-      <div className="bridge-actions">
-        <button type="button" onClick={onCheck} disabled={state === "checking" || state === "scanning"}>
-          {state === "checking" ? "Checking..." : "Check extension"}
-        </button>
-        <button type="button" onClick={onScan} disabled={!canScan}>
-          {state === "scanning" || loading ? "Scanning..." : normalisedUsername ? `Scan u/${normalisedUsername}` : "Enter username to scan"}
-        </button>
+
+      <ol className="journey-list">
+        <JourneyStep number={1} title="Extension" body="Detect PaidPolitely Capture in this browser." state={extensionStepState} />
+        <JourneyStep number={2} title="Username" body="Paste a username, profile URL, or u/name." state={usernameStepState} />
+        <JourneyStep number={3} title="Capture" body="Open Reddit, scroll the profile, and import metadata." state={captureStepState} />
+        <JourneyStep number={4} title="Review" body="Read the subreddit, timing, and content signals." state={reviewStepState} />
+      </ol>
+
+      <form className="scan-form" onSubmit={submit}>
+        <label htmlFor="username">Reddit profile</label>
+        <div className="scan-controls">
+          <input
+            id="username"
+            name="username"
+            placeholder="u/MrMrsHK or reddit.com/user/MrMrsHK"
+            value={username}
+            onChange={(event) => setUsername(event.target.value)}
+            autoComplete="off"
+          />
+          <button className="primary-action" disabled={!canScan} type="submit">
+            {extensionState === "scanning" || loading ? "Scanning..." : normalisedUsername ? `Scan u/${normalisedUsername}` : "Scan profile"}
+          </button>
+        </div>
+        <div className="scan-help-row">
+          <small>{extensionReady ? "Extension ready. Reddit will open in a tab if needed." : "Install or reload the extension, then recheck."}</small>
+          <button className="text-action" type="button" onClick={onTryPublicJson} disabled={!hasValidUsername || loading}>
+            Try server-side JSON instead
+          </button>
+        </div>
         {EXTENSION_STORE_URL ? (
           <a className="secondary-link" href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">
             Install extension
           </a>
         ) : null}
-      </div>
-      <div className="install-steps">
-        <strong>Local manual install flow</strong>
-        <ol>
-          <li>Open <code>chrome://extensions</code>.</li>
-          <li>Enable <strong>Developer mode</strong>.</li>
-          <li>Click <strong>Load unpacked</strong> and select this repo&apos;s <code>extension</code> folder.</li>
-          <li>Click <strong>Reload</strong> on the extension card after every repo update.</li>
-          <li>Reload this website tab so the extension content-script bridge can attach.</li>
-        </ol>
-      </div>
+      </form>
     </section>
   );
 }
 
-function BrowserImportCard({
+function ManualImportCard({
   importPayload,
   setImportPayload,
   onImport,
@@ -285,29 +332,31 @@ function BrowserImportCard({
   }
 
   return (
-    <section className="import-card">
-      <div>
-        <span className="eyebrow">Manual fallback</span>
-        <h2>Browser capture import</h2>
+    <details className="fallback-card">
+      <summary>
+        <span>Manual import / debugging fallback</span>
+        <small>Use this only if the extension bridge fails.</small>
+      </summary>
+      <div className="fallback-body">
         <p>
-          Keep this as a fallback while the extension is in local development. Open the Reddit profile, paste the capture
-          snippet into DevTools console, let it auto-scroll the profile, then paste the copied JSON here.
+          Open the Reddit profile, paste the robust capture snippet into DevTools, let it scroll, then paste the copied JSON here.
+          The importer will still clean duplicates, game cards, and comment-link rows.
         </p>
-      </div>
-      <div className="import-actions">
-        <button type="button" onClick={copySnippet}>
-          {copied ? "Copied" : "Copy robust capture snippet"}
+        <div className="import-actions">
+          <button type="button" onClick={copySnippet}>
+            {copied ? "Snippet copied" : "Copy robust capture snippet"}
+          </button>
+        </div>
+        <textarea
+          value={importPayload}
+          onChange={(event) => setImportPayload(event.target.value)}
+          placeholder='Paste { "source": "paidpolitely-reddit-extension-capture-v2", ... } or browser-import JSON here'
+        />
+        <button type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
+          {loading ? "Importing..." : "Analyse pasted JSON"}
         </button>
       </div>
-      <textarea
-        value={importPayload}
-        onChange={(event) => setImportPayload(event.target.value)}
-        placeholder='Paste the copied { "source": "paidpolitely-reddit-browser-import-v4", ... } JSON here'
-      />
-      <button type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
-        {loading ? "Importing..." : "Analyse browser import"}
-      </button>
-    </section>
+    </details>
   );
 }
 
@@ -378,6 +427,115 @@ function Timeline({ rows }: { rows: TimelinePoint[] }) {
   );
 }
 
+function Dashboard({ data }: { data: AnalyzeResponse }) {
+  return (
+    <section className="dashboard">
+      <WarningCard warnings={data.warnings} />
+
+      <div className="profile-card">
+        <div>
+          <span className="eyebrow">Latest scan</span>
+          <h2>u/{data.profile.username}</h2>
+          <p>Profile created {formatDate(data.profile.createdUtc)}</p>
+        </div>
+        <div className="karma-total">
+          <span>Total karma</span>
+          <strong>{numberFormat(data.profile.totalKarma)}</strong>
+        </div>
+      </div>
+
+      <div className="stat-grid">
+        <StatCard label="Captured posts" value={numberFormat(data.analytics.summary.posts)} detail="Cleaned public rows" />
+        <StatCard label="Captured comments" value={numberFormat(data.analytics.summary.comments)} detail="When available" />
+        <StatCard label="Avg post score" value={String(data.analytics.summary.averagePostScore)} />
+        <StatCard label="Best subreddit" value={data.analytics.summary.bestSubreddit ? `r/${data.analytics.summary.bestSubreddit}` : "N/A"} />
+        <StatCard
+          label="Best UTC hour"
+          value={data.analytics.summary.bestPostingHourUtc === null ? "N/A" : `${data.analytics.summary.bestPostingHourUtc}:00`}
+          detail="From captured posts"
+        />
+        <StatCard label="Captured score" value={compactNumber(data.analytics.summary.totalPostScore)} />
+      </div>
+
+      <section className="panel highlight-panel">
+        <div className="panel-heading">
+          <span className="eyebrow">Actionable readout</span>
+          <h2>Next moves</h2>
+        </div>
+        {data.analytics.recommendations.length === 0 ? (
+          <p className="muted">Not enough public data for recommendations yet.</p>
+        ) : (
+          <ul>
+            {data.analytics.recommendations.map((recommendation) => (
+              <li key={recommendation}>{recommendation}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <section className="panel-grid">
+        <article className="panel">
+          <div className="panel-heading">
+            <span className="eyebrow">Where it works</span>
+            <h2>Subreddit performance</h2>
+          </div>
+          <SubredditTable rows={data.analytics.subreddits} />
+        </article>
+        <article className="panel">
+          <div className="panel-heading">
+            <span className="eyebrow">Format signal</span>
+            <h2>Content formats</h2>
+          </div>
+          <ContentTypeList rows={data.analytics.contentTypes} />
+        </article>
+      </section>
+
+      <section className="panel">
+        <div className="panel-heading">
+          <span className="eyebrow">Momentum</span>
+          <h2>Recent activity score</h2>
+        </div>
+        <Timeline rows={data.analytics.timeline} />
+      </section>
+
+      <section className="panel-grid">
+        <article className="panel">
+          <div className="panel-heading">
+            <span className="eyebrow">Repeat patterns</span>
+            <h2>Top posts</h2>
+          </div>
+          <div className="link-list">
+            {data.analytics.topPosts.map((post) => (
+              <a href={post.permalink} target="_blank" rel="noreferrer" key={post.id}>
+                <strong>{post.title}</strong>
+                <span>r/{post.subreddit} · {numberFormat(post.score)} score · {post.numComments} comments</span>
+              </a>
+            ))}
+          </div>
+        </article>
+        <article className="panel">
+          <div className="panel-heading">
+            <span className="eyebrow">Conversation signal</span>
+            <h2>Top comments</h2>
+          </div>
+          {data.analytics.topComments.length === 0 ? (
+            <p className="muted">No comments were captured in this browser import.</p>
+          ) : (
+            <div className="link-list">
+              {data.analytics.topComments.map((comment) => (
+                <a href={comment.permalink} target="_blank" rel="noreferrer" key={comment.id}>
+                  <strong>{comment.linkTitle ?? `Comment in r/${comment.subreddit}`}</strong>
+                  <span>r/{comment.subreddit} · {numberFormat(comment.score)} score</span>
+                </a>
+              ))}
+            </div>
+          )}
+        </article>
+      </section>
+    </section>
+  );
+}
+
 export default function Home() {
   const [username, setUsername] = useState("");
   const [importPayload, setImportPayload] = useState("");
@@ -394,14 +552,14 @@ export default function Home() {
 
   async function checkExtension() {
     setExtensionState("checking");
-    setExtensionMessage("Checking for PaidPolitely Capture. If you just installed or reloaded the extension, reload this website tab too.");
+    setExtensionMessage("Checking for PaidPolitely Capture. Reload this page after reloading the unpacked extension.");
 
     try {
       const response = await sendExtensionMessage<ExtensionPingResponse>({ type: "PAIDPOLITELY_PING" });
       if (response?.ok) {
         setExtensionState("installed");
         setExtensionVersion(response.version ?? null);
-        setExtensionMessage(`PaidPolitely Capture is installed and ready${response.bridge ? ` via ${response.bridge}` : ""}.`);
+        setExtensionMessage(`Ready${response.bridge ? ` via ${response.bridge}` : ""}.`);
         return;
       }
 
@@ -443,13 +601,19 @@ export default function Home() {
     }
   }
 
-  async function analyseAccount(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
+  async function analysePublicJson() {
+    const normalisedUsername = normaliseUsernameInput(username);
+    if (!validUsername(normalisedUsername)) {
+      setState("error");
+      setError("Enter a valid Reddit username before trying public JSON.");
+      return;
+    }
+
     setState("loading");
     setError(null);
 
     try {
-      const response = await fetch(`/api/analyze?username=${encodeURIComponent(username)}`);
+      const response = await fetch(`/api/analyze?username=${encodeURIComponent(normalisedUsername)}`);
       const payload = await readJsonResponse(response);
 
       if (!response.ok) {
@@ -462,7 +626,7 @@ export default function Home() {
       setState("loaded");
     } catch {
       setState("error");
-      setError("The request failed before the API could respond. Use the browser capture fallback below.");
+      setError("The request failed before the API could respond. Use the extension scan instead.");
     }
   }
 
@@ -472,7 +636,7 @@ export default function Home() {
 
   async function scanWithExtension() {
     const normalisedUsername = normaliseUsernameInput(username);
-    if (!/^[A-Za-z0-9_-]{3,20}$/.test(normalisedUsername)) {
+    if (!validUsername(normalisedUsername)) {
       setState("error");
       setError("Enter a valid Reddit username before scanning with the extension.");
       return;
@@ -481,7 +645,7 @@ export default function Home() {
     setState("loading");
     setError(null);
     setExtensionState("scanning");
-    setExtensionMessage(`Opening or focusing Reddit for u/${normalisedUsername}. If Reddit asks for login or age confirmation, follow the signpost in the Reddit tab.`);
+    setExtensionMessage(`Opening or focusing Reddit for u/${normalisedUsername}. If Reddit asks for login or age confirmation, follow the signpost in that tab.`);
 
     try {
       const response = await sendExtensionMessage<ExtensionScanResponse>({
@@ -501,7 +665,7 @@ export default function Home() {
       setImportPayload(raw);
       const imported = await importRawPayload(raw);
       setExtensionState("installed");
-      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername} through the extension.` : "The extension captured data, but the app could not import it.");
+      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}.` : "The extension captured data, but the app could not import it.");
     } catch (extensionError) {
       setState("error");
       setExtensionState("missing");
@@ -513,138 +677,44 @@ export default function Home() {
 
   return (
     <main>
-      <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.2.1</div>
-        <h1>Reddit account analytics without OAuth.</h1>
-        <p>
-          Enter a Reddit username, scan with the local extension bridge, or fall back to browser capture when Reddit blocks
-          public JSON.
-        </p>
-
-        <form onSubmit={analyseAccount} className="search-card">
-          <label htmlFor="username">Reddit username</label>
-          <div>
-            <input
-              id="username"
-              name="username"
-              placeholder="u/MrMrsHK"
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              autoComplete="off"
-            />
-            <button disabled={state === "loading" || username.trim().length === 0} type="submit">
-              {state === "loading" ? "Analysing..." : "Analyse"}
-            </button>
-          </div>
-          <small>No Reddit password, cookies, OAuth app, or session token required.</small>
-        </form>
+      <section className="hero hero-compact">
+        <div>
+          <div className="eyebrow">PaidPolitely v0.2.3</div>
+          <h1>Reddit profile scan in one browser click.</h1>
+          <p>
+            Extension-first analytics for creator accounts. Open Reddit in the user&apos;s browser, capture public post metadata,
+            clean noisy rows, and turn it into subreddit and content signals.
+          </p>
+        </div>
+        <div className="trust-card">
+          <strong>No Reddit secrets touched.</strong>
+          <span>No password, cookies, OAuth token, session token, DMs, or account settings.</span>
+        </div>
       </section>
 
       {state === "error" ? <div className="error-card">{error}</div> : null}
 
-      <ExtensionBridgeCard
-        state={extensionState}
-        message={extensionMessage}
-        version={extensionVersion}
+      <ScanSetupCard
         username={username}
+        setUsername={setUsername}
+        extensionState={extensionState}
+        extensionMessage={extensionMessage}
+        extensionVersion={extensionVersion}
+        hasData={Boolean(data)}
         loading={state === "loading"}
         onCheck={checkExtension}
         onScan={scanWithExtension}
+        onTryPublicJson={analysePublicJson}
       />
 
-      <BrowserImportCard
+      <ManualImportCard
         importPayload={importPayload}
         setImportPayload={setImportPayload}
         onImport={analyseImport}
         loading={state === "loading"}
       />
 
-      {!data ? (
-        <EmptyState />
-      ) : (
-        <section className="dashboard">
-          <WarningCard warnings={data.warnings} />
-
-          <div className="profile-card">
-            <div>
-              <span className="eyebrow">Connected public profile</span>
-              <h2>u/{data.profile.username}</h2>
-              <p>Created {formatDate(data.profile.createdUtc)}</p>
-            </div>
-            <div className="karma-total">
-              <span>Total karma</span>
-              <strong>{numberFormat(data.profile.totalKarma)}</strong>
-            </div>
-          </div>
-
-          <div className="stat-grid">
-            <StatCard label="Recent posts" value={numberFormat(data.analytics.summary.posts)} detail="Last public listing" />
-            <StatCard label="Recent comments" value={numberFormat(data.analytics.summary.comments)} detail="Last public listing" />
-            <StatCard label="Avg post score" value={String(data.analytics.summary.averagePostScore)} />
-            <StatCard label="Best subreddit" value={data.analytics.summary.bestSubreddit ? `r/${data.analytics.summary.bestSubreddit}` : "N/A"} />
-            <StatCard
-              label="Best UTC hour"
-              value={data.analytics.summary.bestPostingHourUtc === null ? "N/A" : `${data.analytics.summary.bestPostingHourUtc}:00`}
-              detail="From recent posts"
-            />
-            <StatCard label="Post score" value={compactNumber(data.analytics.summary.totalPostScore)} />
-          </div>
-
-          <section className="panel highlight-panel">
-            <h2>Next moves</h2>
-            {data.analytics.recommendations.length === 0 ? (
-              <p className="muted">Not enough public data for recommendations yet.</p>
-            ) : (
-              <ul>
-                {data.analytics.recommendations.map((recommendation) => (
-                  <li key={recommendation}>{recommendation}</li>
-                ))}
-              </ul>
-            )}
-          </section>
-
-          <section className="panel-grid">
-            <article className="panel">
-              <h2>Subreddit performance</h2>
-              <SubredditTable rows={data.analytics.subreddits} />
-            </article>
-            <article className="panel">
-              <h2>Content formats</h2>
-              <ContentTypeList rows={data.analytics.contentTypes} />
-            </article>
-          </section>
-
-          <section className="panel">
-            <h2>Recent activity score</h2>
-            <Timeline rows={data.analytics.timeline} />
-          </section>
-
-          <section className="panel-grid">
-            <article className="panel">
-              <h2>Top posts</h2>
-              <div className="link-list">
-                {data.analytics.topPosts.map((post) => (
-                  <a href={post.permalink} target="_blank" rel="noreferrer" key={post.id}>
-                    <strong>{post.title}</strong>
-                    <span>r/{post.subreddit} · {numberFormat(post.score)} score · {post.numComments} comments</span>
-                  </a>
-                ))}
-              </div>
-            </article>
-            <article className="panel">
-              <h2>Top comments</h2>
-              <div className="link-list">
-                {data.analytics.topComments.map((comment) => (
-                  <a href={comment.permalink} target="_blank" rel="noreferrer" key={comment.id}>
-                    <strong>{comment.linkTitle ?? `Comment in r/${comment.subreddit}`}</strong>
-                    <span>r/{comment.subreddit} · {numberFormat(comment.score)} score</span>
-                  </a>
-                ))}
-              </div>
-            </article>
-          </section>
-        </section>
-      )}
+      {!data ? <EmptyState /> : <Dashboard data={data} />}
     </main>
   );
 }
