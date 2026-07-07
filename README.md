@@ -2,7 +2,7 @@
 
 v0.3.0 of the PaidPolitely Reddit account analytics SaaS.
 
-This version adds Better Auth email/password accounts, console-printed email verification codes for local development, PostgreSQL scan persistence, and the queued Ollama planner.
+This version adds Better Auth email/password accounts, console-printed email verification codes for local development, PostgreSQL scan persistence, a saved Reddit username per user, latest-dashboard hydration on reload, and the queued Ollama planner.
 
 The extension does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
@@ -11,6 +11,8 @@ The extension does **not** read Reddit passwords, cookies, session tokens, priva
 - Requires a Better Auth session before using the scanner UI.
 - Supports email/password sign-up and sign-in.
 - Verifies email with a one-time code printed to the Next.js server console.
+- Saves one default Reddit username on the signed-in user.
+- Reloads the latest saved dashboard automatically after sign-in or page refresh.
 - Accepts a Reddit username, profile URL, or `u/username` value.
 - Tries public server-side profile data from `about.json`.
 - Uses the extension no-tab scan and quiet-tab fallback when server-side JSON is blocked.
@@ -19,6 +21,7 @@ The extension does **not** read Reddit passwords, cookies, session tokens, priva
 - Stores accounts, scans, post snapshots, comment snapshots, subreddit snapshots, repeated media groups, and planner jobs.
 - Queues next-post planner jobs instead of calling Ollama inline during the scan request.
 - Adds a persistent planner worker command.
+- Shows dashboard panels for health, stats, subreddit performance, format signal, timeline, top posts, top comments, and AI planning.
 
 ## Run locally
 
@@ -56,7 +59,7 @@ Generate a local auth secret with:
 openssl rand -base64 32
 ```
 
-## Local auth flow
+## Local auth and workspace flow
 
 1. Start `pnpm dev`.
 2. Open `http://localhost:3000`.
@@ -64,7 +67,38 @@ openssl rand -base64 32
 4. Watch the terminal running `pnpm dev`.
 5. Copy the printed verification code.
 6. Paste it into the verification form.
-7. The scanner UI unlocks after verification/sign-in.
+7. Enter the Reddit username once and scan.
+8. Refresh the page or sign out/in again; the saved username and latest persisted dashboard reload automatically.
+
+## Workspace API
+
+The workspace route is session-scoped.
+
+```http
+GET /api/workspace
+```
+
+Returns the saved Reddit username and the latest persisted dashboard payload:
+
+```ts
+type WorkspaceResponse = {
+  settings: {
+    redditUsername: string | null;
+  };
+  latest: AnalyzeResponse | null;
+};
+```
+
+Update the saved username:
+
+```http
+PATCH /api/workspace
+Content-Type: application/json
+
+{
+  "redditUsername": "MrMrsHK"
+}
+```
 
 ## Planner queue
 
