@@ -278,9 +278,27 @@ async function captureRedditProfileInPage(expectedUsername) {
     if (href.startsWith("/")) return "https://www.reddit.com" + href;
     return "https://www.reddit.com/" + href;
   };
-  const redditIdFromHref = (href) => href?.match(/\/comments\/([^/]+)\//i)?.[1] ?? "";
+  const canonical = (href) => {
+    try {
+      const url = new URL(absolute(href));
+      return url.origin + url.pathname.replace(/\/$/, "");
+    } catch {
+      return absolute(href).split(/[?#]/)[0].replace(/\/$/, "");
+    }
+  };
+  const redditIdFromHref = (href) => href?.match(/\/comments\/([^/?#]+)(?:[/?#]|$)/i)?.[1] ?? "";
   const subredditFromHref = (href) => href?.match(/\/r\/([^/]+)\//i)?.[1] ?? "";
   const isCommentHref = (href) => /\/comments\/[^/]+\/[^/]+\/comment\//i.test(String(href || ""));
+  const isGameOrPromoHref = (href) => {
+    const lower = String(href || "").toLowerCase();
+    return lower.includes("entry_point=games_drawer") || lower.includes("/r/colorpuzzlegame/");
+  };
+  const isGameOrPromoPost = ({ title, subreddit, href, score, numComments, id }) => {
+    if (isGameOrPromoHref(href)) return true;
+    if (String(subreddit || "").toLowerCase() === "colorpuzzlegame" && String(title || "").trim().toLowerCase() === "color puzzle") return true;
+    if (String(id || "").startsWith("browser-post-") && score >= 100000 && numComments === 0) return true;
+    return false;
+  };
   const username =
     String(expectedUsername || "") ||
     location.pathname.match(/\/user\/([^/]+)/i)?.[1] ||
@@ -310,10 +328,12 @@ async function captureRedditProfileInPage(expectedUsername) {
     document.querySelectorAll("shreddit-post").forEach(add);
     document.querySelectorAll('[data-testid="post-container"]').forEach(add);
     document.querySelectorAll("article").forEach((node) => {
-      if (node.querySelector('a[href*="/comments/"]')) add(node);
+      const anchor = node.querySelector('a[href*="/comments/"]');
+      if (anchor && !isGameOrPromoHref(anchor.getAttribute("href"))) add(node);
     });
     document.querySelectorAll('a[href*="/comments/"]').forEach((anchor) => {
-      if (isCommentHref(anchor.getAttribute("href"))) return;
+      const href = anchor.getAttribute("href") || "";
+      if (isCommentHref(href) || isGameOrPromoHref(href)) return;
       add(anchor.closest("shreddit-post"));
       add(anchor.closest('[data-testid="post-container"]'));
       add(anchor.closest("article"));
@@ -325,7 +345,7 @@ async function captureRedditProfileInPage(expectedUsername) {
     for (const [index, node] of visiblePostNodes().entries()) {
       const anchor = node.matches?.('a[href*="/comments/"]') ? node : node.querySelector?.('a[href*="/comments/"]');
       const href = node.getAttribute?.("permalink") || anchor?.getAttribute("href") || "";
-      if (isCommentHref(href)) continue;
+      if (isCommentHref(href) || isGameOrPromoHref(href)) continue;
       const idFromHref = redditIdFromHref(href);
       const id = node.getAttribute?.("id") || (idFromHref ? "t3_" + idFromHref : "browser-post-" + index);
       const title = text(node.querySelector?.('[slot="title"], a[slot="title"], h1, h2, h3')) || text(anchor);
@@ -334,12 +354,13 @@ async function captureRedditProfileInPage(expectedUsername) {
       const subreddit = subredditFromHref(href) || subredditAttribute.replace(/^r\//i, "");
       const score = numberFrom(node.getAttribute?.("score") || text(node.querySelector?.('[aria-label*="upvote"], [id*="score"], faceplate-number')));
       const numComments = numberFrom(node.getAttribute?.("comment-count") || text(node.querySelector?.('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
+      if (isGameOrPromoPost({ title, subreddit, href, score, numComments, id })) continue;
       const createdRaw = node.getAttribute?.("created-timestamp") || node.getAttribute?.("created") || node.querySelector?.("time")?.getAttribute("datetime") || "";
       const createdParsed = Date.parse(createdRaw);
       const createdUtc = Number.isFinite(createdParsed) ? Math.floor(createdParsed / 1000) : Math.floor(Date.now() / 1000);
       if (!title || !subreddit || !href) continue;
-      const key = idFromHref || id || href;
-      const post = { id, title, subreddit, permalink: absolute(href), score, numComments, createdUtc };
+      const key = idFromHref || canonical(href) || id;
+      const post = { id, title, subreddit, permalink: canonical(href), score, numComments, createdUtc };
       const existing = postsByKey.get(key);
       if (!existing || post.score + post.numComments > existing.score + existing.numComments) {
         postsByKey.set(key, post);
@@ -413,7 +434,7 @@ async function captureRedditProfileInPage(expectedUsername) {
   document.getElementById("paidpolitely-capture-progress")?.remove();
 
   return {
-    source: "paidpolitely-reddit-extension-capture-v1",
+    source: "paidpolitely-reddit-extension-capture-v2",
     capturedAt: new Date().toISOString(),
     username,
     profile: { username },
