@@ -75,6 +75,18 @@ function absoluteRedditUrl(value: unknown): string {
   return `https://www.reddit.com/${raw}`;
 }
 
+function canonicalRedditUrl(value: unknown): string {
+  const absolute = absoluteRedditUrl(value);
+
+  try {
+    const url = new URL(absolute);
+    const pathname = url.pathname.replace(/\/$/, "");
+    return `${url.origin}${pathname}`;
+  } catch {
+    return absolute.split(/[?#]/)[0].replace(/\/$/, "");
+  }
+}
+
 function normaliseUsername(value: unknown): string {
   const username = asString(value).replace(/^u\//i, "").replace(/^@/, "");
   if (!/^[A-Za-z0-9_-]{3,20}$/.test(username)) {
@@ -90,7 +102,7 @@ function subredditFromPermalink(value: unknown): string {
 
 function redditIdFromPermalink(value: unknown): string {
   const permalink = asString(value);
-  const id = permalink.match(/\/comments\/([^/]+)\//i)?.[1];
+  const id = permalink.match(/\/comments\/([^/?#]+)(?:[/?#]|$)/i)?.[1];
   return id ? `t3_${id}` : "";
 }
 
@@ -101,6 +113,21 @@ function isCommentPermalink(value: unknown): boolean {
 function isUrlOnlyTitle(title: string, permalink: string): boolean {
   if (!/^https?:\/\//i.test(title)) return false;
   return title === permalink || title.includes("/comments/");
+}
+
+function isRedditGameOrPromoRow(raw: BrowserImportPost): boolean {
+  const title = asString(raw.title).toLowerCase();
+  const subreddit = asString(raw.subreddit).replace(/^r\//i, "").toLowerCase();
+  const permalink = absoluteRedditUrl(raw.permalink).toLowerCase();
+  const score = asNumber(raw.score, 0);
+  const numComments = asNumber(raw.numComments, 0);
+  const id = asString(raw.id).toLowerCase();
+
+  if (permalink.includes("entry_point=games_drawer") || permalink.includes("/r/colorpuzzlegame/")) return true;
+  if (subreddit === "colorpuzzlegame" && title === "color puzzle") return true;
+  if (id.startsWith("browser-post-") && score >= 100_000 && numComments === 0) return true;
+
+  return false;
 }
 
 function cleanSubreddit(rawSubreddit: unknown, title: string, permalink: unknown, username: string): string {
@@ -136,9 +163,11 @@ function toProfile(payload: BrowserImportPayload): RedditProfile {
 }
 
 function toPost(raw: BrowserImportPost, index: number, username: string): RedditPost | null {
+  if (isRedditGameOrPromoRow(raw)) return null;
+
   const title = asString(raw.title);
   const subreddit = cleanSubreddit(raw.subreddit, title, raw.permalink, username);
-  const permalink = absoluteRedditUrl(raw.permalink);
+  const permalink = canonicalRedditUrl(raw.permalink);
   const rawId = asString(raw.id);
 
   if (!title || !subreddit || permalink === "https://www.reddit.com") return null;
@@ -170,7 +199,7 @@ function dedupePosts(posts: RedditPost[]): RedditPost[] {
   const rows = new Map<string, RedditPost>();
 
   for (const post of posts) {
-    const key = redditIdFromPermalink(post.permalink) || post.id || post.permalink;
+    const key = redditIdFromPermalink(post.permalink) || canonicalRedditUrl(post.permalink) || post.id;
     const existing = rows.get(key);
 
     if (!existing || scorePostQuality(post) > scorePostQuality(existing)) {
@@ -184,7 +213,7 @@ function dedupePosts(posts: RedditPost[]): RedditPost[] {
 function toComment(raw: BrowserImportComment, index: number): RedditComment | null {
   const body = asString(raw.body);
   const subreddit = asString(raw.subreddit).replace(/^r\//i, "");
-  const permalink = absoluteRedditUrl(raw.permalink);
+  const permalink = canonicalRedditUrl(raw.permalink);
 
   if (!body || !subreddit) return null;
 
@@ -218,6 +247,7 @@ export function parseBrowserImport(raw: string): RedditAccountData {
   const rawPosts = Array.isArray(payload.posts) ? payload.posts : [];
   const rawPostCount = rawPosts.length;
   const commentPermalinkRows = rawPosts.filter((post) => isCommentPermalink(post.permalink)).length;
+  const gameOrPromoRows = rawPosts.filter(isRedditGameOrPromoRow).length;
   const parsedPosts = rawPosts
     .map((post, index) => toPost(post, index, profile.username))
     .filter((post): post is RedditPost => Boolean(post));
@@ -237,7 +267,8 @@ export function parseBrowserImport(raw: string): RedditAccountData {
     comments,
     warnings: [
       "Imported from browser capture because Reddit blocked server-side public JSON.",
-      removedPostRows > 0 ? `Cleaned ${removedPostRows} duplicate, comment-link, or incomplete browser post rows.` : null,
+      removedPostRows > 0 ? `Cleaned ${removedPostRows} duplicate, game/promo, comment-link, or incomplete browser post rows.` : null,
+      gameOrPromoRows > 0 ? `Ignored ${gameOrPromoRows} Reddit game/promo rows so they do not count as posts.` : null,
       commentPermalinkRows > 0 ? `Ignored ${commentPermalinkRows} comment permalink rows so they do not count as posts.` : null,
       posts.length === 0 ? "No posts were found in the browser import." : null,
       comments.length === 0 ? "No comments were found in the browser import." : null,
