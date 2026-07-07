@@ -3,8 +3,8 @@ import type { ReactNode } from "react";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "PaidPolitely Reddit Analytics",
-  description: "v0.1.0 Reddit account analytics from public Reddit profile data.",
+  title: "PaidPolitely Reddit Profile Scanner",
+  description: "Extension-first Reddit profile analytics from browser-visible public post metadata.",
 };
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
