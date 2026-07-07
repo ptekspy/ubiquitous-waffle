@@ -1,18 +1,19 @@
 # PaidPolitely Reddit Analytics
 
-v0.1.1 of the PaidPolitely Reddit account analytics SaaS.
+v0.1.2 of the PaidPolitely Reddit account analytics SaaS.
 
-This version deliberately avoids Reddit OAuth. It analyses a public Reddit account by fetching public Reddit JSON for profiles, submissions, and comments. Because public Reddit access can return 403s depending on host/network/header behaviour, the fetcher now tries multiple public JSON routes and reports partial imports instead of failing the whole scan when posts or comments are blocked.
+This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON for profiles, submissions, and comments. If Reddit blocks server-side JSON with a 403, the UI now has a browser capture fallback: open the profile in your own browser, run the copied capture snippet, paste the copied JSON, and analyse that instead.
 
-## What v0.1.1 does
+## What v0.1.2 does
 
 - Accepts a Reddit username, profile URL, or `u/username` value.
-- Fetches public profile data from `about.json`.
-- Fetches the latest public submitted posts.
-- Fetches the latest public comments.
+- Tries public profile data from `about.json`.
+- Tries latest public submitted posts and comments.
 - Retries public JSON requests through `www.reddit.com` and `api.reddit.com`.
 - Uses API-style headers first, then browser-style headers as a fallback.
-- Shows partial import warnings if posts or comments cannot be imported.
+- Catches client-side fetch failures so the UI does not throw an unhandled rejection.
+- Adds a browser capture fallback for when Reddit blocks server-side JSON.
+- Shows partial import warnings if data cannot be imported.
 - Calculates a lightweight analytics report:
   - total recent posts/comments
   - average post/comment score
@@ -29,7 +30,7 @@ This version deliberately avoids Reddit OAuth. It analyses a public Reddit accou
 - No database.
 - No account ownership verification.
 - No scheduled snapshots.
-- No browser extension/session import.
+- No packaged browser extension.
 - No payments or multi-user auth.
 
 Those are intentionally left for later iterations.
@@ -57,8 +58,21 @@ Set `REDDIT_DEBUG=1` locally to print failed Reddit fetch attempts to the dev se
 
 ## API
 
+Server-side public JSON attempt:
+
 ```http
 GET /api/analyze?username=MrMrsHK
+```
+
+Browser capture fallback:
+
+```http
+POST /api/analyze/import
+Content-Type: application/json
+
+{
+  "raw": "{...browser capture JSON...}"
+}
 ```
 
 Returns:
@@ -71,11 +85,22 @@ type AnalyzeResponse = {
 };
 ```
 
+## Browser capture workflow
+
+1. Open the Reddit profile in your normal browser.
+2. In PaidPolitely, click **Copy capture snippet**.
+3. Open DevTools on the Reddit page.
+4. Paste the snippet into the console and run it.
+5. The snippet copies a JSON payload to your clipboard.
+6. Paste that JSON into PaidPolitely and click **Analyse browser import**.
+
+This is the temporary v0.1.2 bridge. It gives us a user-assisted import path while we keep the main app free of Reddit OAuth.
+
 ## Next iteration ideas
 
+- Replace the console snippet with a tiny Chrome extension.
 - Store imported snapshots in Postgres.
 - Add username ownership verification via profile bio code.
 - Add historical score tracking.
 - Add shareable reports.
 - Add PaidPolitely network/subreddit recommendations.
-- Add optional browser extension import for private-visible metrics.
