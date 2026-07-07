@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PaidPolitely Capture",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Browser-session Reddit profile capture for PaidPolitely analytics. Does not read Reddit cookies or session tokens.",
   "permissions": ["tabs", "scripting"],
   "host_permissions": ["https://www.reddit.com/*", "https://reddit.com/*"],
@@ -9,8 +9,21 @@
     "service_worker": "background.js"
   },
   "action": {
-    "default_title": "PaidPolitely Capture"
+    "default_title": "PaidPolitely Capture",
+    "default_popup": "popup.html"
   },
+  "content_scripts": [
+    {
+      "matches": [
+        "http://localhost/*",
+        "http://127.0.0.1/*",
+        "https://paidpolitely.com/*",
+        "https://www.paidpolitely.com/*"
+      ],
+      "js": ["bridge.js"],
+      "run_at": "document_start"
+    }
+  ],
   "externally_connectable": {
     "matches": [
       "http://localhost/*",
