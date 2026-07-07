@@ -8,18 +8,12 @@ import { ErrorCard } from "@/components/error-card";
 import { Hero } from "@/components/hero";
 import { ManualImportCard } from "@/components/manual-import-card";
 import { ScanSetupCard } from "@/components/scan-setup-card";
-import type { ApiError } from "@/lib/api/types";
+import { fetchPublicAnalysis, importBrowserPayload } from "@/lib/api/client";
 import { sendExtensionMessage } from "@/lib/extension/client";
 import type { ExtensionPingResponse, ExtensionScanResponse, ExtensionState, LoadState } from "@/lib/extension/types";
 import type { AnalyzeResponse } from "@/lib/types";
-import { isApiError } from "@/utils/is-api-error";
 import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
 import { normaliseRedditUsername } from "@/utils/normalise-reddit-username";
-import { readJsonResponse } from "@/utils/read-json-response";
-
-const JSON_FALLBACK_ERROR: ApiError = {
-  error: "The server returned a non-JSON response.",
-};
 
 export default function Home() {
   const [username, setUsername] = useState("");
@@ -62,28 +56,16 @@ export default function Home() {
     setState("loading");
     setError(null);
 
-    try {
-      const response = await fetch("/api/analyze/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw }),
-      });
-      const payload = await readJsonResponse<AnalyzeResponse, ApiError>(response, JSON_FALLBACK_ERROR);
-
-      if (isApiError(payload)) {
-        setState("error");
-        setError(payload.error);
-        return false;
-      }
-
-      setData(payload);
-      setState("loaded");
-      return true;
-    } catch {
+    const result = await importBrowserPayload(raw);
+    if (!result.ok) {
       setState("error");
-      setError("The browser import request failed before the API could respond.");
+      setError(result.error);
       return false;
     }
+
+    setData(result.data);
+    setState("loaded");
+    return true;
   }
 
   async function analysePublicJson() {
@@ -97,22 +79,15 @@ export default function Home() {
     setState("loading");
     setError(null);
 
-    try {
-      const response = await fetch(`/api/analyze?username=${encodeURIComponent(normalisedUsername)}`);
-      const payload = await readJsonResponse<AnalyzeResponse, ApiError>(response, JSON_FALLBACK_ERROR);
-
-      if (isApiError(payload)) {
-        setState("error");
-        setError(payload.error);
-        return;
-      }
-
-      setData(payload);
-      setState("loaded");
-    } catch {
+    const result = await fetchPublicAnalysis(normalisedUsername);
+    if (!result.ok) {
       setState("error");
-      setError("The request failed before the API could respond. Use the extension scan instead.");
+      setError(result.error);
+      return;
     }
+
+    setData(result.data);
+    setState("loaded");
   }
 
   async function analyseImport() {
