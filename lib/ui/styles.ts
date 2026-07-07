@@ -11,9 +11,9 @@ export const inputClass = "w-full min-w-0 rounded-2xl border border-white/12 bg-
 export const mutedClass = "text-[#c9adbd]";
 
 export function bridgeStateClass(state: ExtensionState): string {
-  if (state === "installed") return "border-[#7affbc]/30 bg-[#7affbc]/7";
-  if (state === "checking" || state === "scanning") return "border-[#ffb86b]/35 bg-[#ffb86b]/8";
-  return "border-[#ff7878]/35 bg-[#ff7878]/8";
+  if (state === "installed") return "border-[#7affbc]/30 bg-[#7affbc]/[0.07]";
+  if (state === "checking" || state === "scanning") return "border-[#ffb86b]/35 bg-[#ffb86b]/[0.08]";
+  return "border-[#ff7878]/35 bg-[#ff7878]/[0.08]";
 }
 
 export function bridgeDotClass(state: ExtensionState): string {
@@ -23,15 +23,15 @@ export function bridgeDotClass(state: ExtensionState): string {
 }
 
 export function stepClass(state: StepState): string {
-  if (state === "done") return "border-[#7affbc]/30 bg-[#7affbc]/7";
-  if (state === "active") return "border-[#ffb86b]/35 bg-[#ffb86b]/8";
-  if (state === "error") return "border-[#ff7878]/35 bg-[#ff7878]/8";
+  if (state === "done") return "border-[#7affbc]/30 bg-[#7affbc]/[0.07]";
+  if (state === "active") return "border-[#ffb86b]/35 bg-[#ffb86b]/[0.08]";
+  if (state === "error") return "border-[#ff7878]/35 bg-[#ff7878]/[0.08]";
   return "border-white/12 bg-white/[0.045]";
 }
 
 export function stepBadgeClass(state: StepState): string {
-  if (state === "done") return "bg-[#7affbc]/18 text-[#caffdf]";
-  if (state === "active") return "bg-[#ffb86b]/18 text-[#ffe7c9]";
-  if (state === "error") return "bg-[#ff7878]/18 text-[#ffd1d1]";
-  return "bg-white/8 text-[#c9adbd]";
+  if (state === "done") return "bg-[#7affbc]/[0.18] text-[#caffdf]";
+  if (state === "active") return "bg-[#ffb86b]/[0.18] text-[#ffe7c9]";
+  if (state === "error") return "bg-[#ff7878]/[0.18] text-[#ffd1d1]";
+  return "bg-white/[0.08] text-[#c9adbd]";
 }
