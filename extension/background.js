@@ -45,7 +45,7 @@ async function handleMessage(message) {
       return { ok: false, status: "bad_username", error: "PaidPolitely needs a valid Reddit username." };
     }
 
-    return scanRedditProfile(username);
+    return scanRedditProfile(username, { openInBackground: message.openInBackground !== false });
   }
 
   return { ok: false, status: "unknown_message", error: `Unsupported PaidPolitely message: ${message.type}` };
@@ -56,9 +56,8 @@ function normaliseUsername(value) {
   return /^[A-Za-z0-9_-]{3,20}$/.test(username) ? username : "";
 }
 
-async function scanRedditProfile(username) {
-  const tab = await findOrOpenRedditProfileTab(username);
-  await focusTab(tab);
+async function scanRedditProfile(username, options = { openInBackground: true }) {
+  const tab = await findOrOpenRedditProfileTab(username, { active: !options.openInBackground });
   await waitForTabLoad(tab.id);
   await delay(1000);
 
@@ -82,23 +81,25 @@ async function scanRedditProfile(username) {
   }
 
   if (preflight.status !== "ready") {
+    await focusTab(tab);
     return {
       ok: false,
       status: preflight.status,
-      error: preflight.reason || "Reddit profile is not ready to scan.",
+      error: preflight.reason || "Reddit profile is not ready to scan. I opened the Reddit tab so you can check what Reddit is showing.",
     };
   }
 
   const payload = await runInTab(tab.id, captureRedditProfileInPage, [username]);
 
   if (!payload || !Array.isArray(payload.posts) || payload.posts.length === 0) {
-    return { ok: false, status: "empty_capture", error: "Reddit loaded, but no usable post rows were captured." };
+    await focusTab(tab);
+    return { ok: false, status: "empty_capture", error: "Reddit loaded, but no usable post rows were captured. I opened the Reddit tab so you can check what Reddit is showing." };
   }
 
   return { ok: true, status: "captured", payload };
 }
 
-async function findOrOpenRedditProfileTab(username) {
+async function findOrOpenRedditProfileTab(username, options = { active: false }) {
   const tabs = await chrome.tabs.query({ url: ["https://www.reddit.com/*", "https://reddit.com/*"] });
   const lowerUsername = username.toLowerCase();
   const existingProfileTab = tabs.find((tab) => {
@@ -111,10 +112,15 @@ async function findOrOpenRedditProfileTab(username) {
     }
   });
 
-  if (existingProfileTab?.id) return existingProfileTab;
+  if (existingProfileTab?.id) {
+    if (existingProfileTab.discarded) {
+      await chrome.tabs.reload(existingProfileTab.id).catch(() => undefined);
+    }
+    return existingProfileTab;
+  }
 
   const url = REDDIT_PROFILE_URL.replace("{username}", encodeURIComponent(username));
-  return chrome.tabs.create({ url, active: true });
+  return chrome.tabs.create({ url, active: options.active });
 }
 
 async function focusTab(tab) {
@@ -434,7 +440,7 @@ async function captureRedditProfileInPage(expectedUsername) {
   document.getElementById("paidpolitely-capture-progress")?.remove();
 
   return {
-    source: "paidpolitely-reddit-extension-capture-v2",
+    source: "paidpolitely-reddit-extension-capture-v3",
     capturedAt: new Date().toISOString(),
     username,
     profile: { username },
