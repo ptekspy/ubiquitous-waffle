@@ -42,6 +42,7 @@ export type RedditAccountData = {
   profile: RedditProfile;
   posts: RedditPost[];
   comments: RedditComment[];
+  warnings: string[];
 };
 
 export type SubredditMetric = {
@@ -90,4 +91,5 @@ export type AccountAnalytics = {
 export type AnalyzeResponse = {
   profile: RedditProfile;
   analytics: AccountAnalytics;
+  warnings: string[];
 };
