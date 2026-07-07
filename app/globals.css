@@ -162,6 +162,27 @@ input {
   color: var(--danger);
 }
 
+.warning-card {
+  border: 1px solid rgba(255, 184, 107, 0.42);
+  border-radius: 24px;
+  background: rgba(255, 184, 107, 0.1);
+  padding: 18px;
+}
+
+.warning-card strong {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--accent-2);
+}
+
+.warning-card ul {
+  display: grid;
+  gap: 6px;
+  margin: 0;
+  padding-left: 20px;
+  color: #ffe7c9;
+}
+
 .example-row,
 .pill-grid,
 .stat-grid,
