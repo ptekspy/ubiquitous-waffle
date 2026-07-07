@@ -11,6 +11,13 @@ type OllamaTagsResponse = {
   }>;
 };
 
+type OllamaChatResponse = {
+  message?: {
+    content?: string;
+  };
+  response?: string;
+};
+
 type PlannerJobRecord = {
   id: string;
   status: PrismaPlannerJobStatus;
@@ -176,6 +183,110 @@ export async function enqueuePlannerJobForScan(scanId: string): Promise<PlannerJ
   });
 
   return toPlannerJobSummary(job);
+}
+
+function extractJsonObjectFromText(value: string): JsonObject {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (isJsonObject(parsed)) return parsed;
+  } catch {
+    // Try loose extraction below.
+  }
+
+  const firstBrace = value.indexOf("{");
+  const lastBrace = value.lastIndexOf("}");
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    try {
+      const parsed = JSON.parse(value.slice(firstBrace, lastBrace + 1)) as unknown;
+      if (isJsonObject(parsed)) return parsed;
+    } catch {
+      // Return raw output below.
+    }
+  }
+
+  return { raw: value };
+}
+
+async function requestPlannerCompletion(prompt: string, model: string): Promise<JsonObject> {
+  const response = await fetch(`${ollamaBaseUrl()}/api/chat`, {
+    method: "POST",
+    cache: "no-store",
+    headers: ollamaHeaders(),
+    body: JSON.stringify({
+      model,
+      stream: false,
+      messages: [
+        { role: "system", content: "Return valid JSON only." },
+        { role: "user", content: prompt },
+      ],
+      options: { temperature: 0.7 },
+    }),
+  });
+
+  if (!response.ok) {
+    const body = await response.text();
+    throw new Error(`Planner request failed: ${response.status} ${body.slice(0, 200)}`);
+  }
+
+  const payload = (await response.json()) as OllamaChatResponse;
+  const content = payload.message?.content ?? payload.response ?? "";
+  if (!content.trim()) throw new Error("Planner returned an empty response.");
+
+  return extractJsonObjectFromText(content);
+}
+
+export async function processNextPlannerJob(): Promise<ProcessPlannerJobResult> {
+  const queued = await prisma.plannerJob.findFirst({
+    where: { status: "QUEUED" },
+    orderBy: { createdAt: "asc" },
+  });
+
+  if (!queued) return { processed: false, reason: "No queued planner jobs." };
+
+  const claimed = await prisma.plannerJob.updateMany({
+    where: { id: queued.id, status: "QUEUED" },
+    data: {
+      status: "RUNNING",
+      lockedAt: new Date(),
+      startedAt: new Date(),
+      attempts: { increment: 1 },
+    },
+  });
+
+  if (claimed.count !== 1) return { processed: false, reason: "Queued planner job was claimed by another worker." };
+
+  const running = await prisma.plannerJob.findUniqueOrThrow({ where: { id: queued.id } });
+
+  try {
+    const model = await resolvePlannerModel();
+    const result = await requestPlannerCompletion(running.prompt, model);
+    const completed = await prisma.plannerJob.update({
+      where: { id: running.id },
+      data: {
+        status: "COMPLETED",
+        model,
+        result: toInputJson(result),
+        error: null,
+        completedAt: new Date(),
+      },
+    });
+
+    return { processed: true, job: toPlannerJobSummary(completed) };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "Planner job failed.";
+    const shouldFail = running.attempts >= 3;
+    const failed = await prisma.plannerJob.update({
+      where: { id: running.id },
+      data: {
+        status: shouldFail ? "FAILED" : "QUEUED",
+        error: message,
+        lockedAt: null,
+        completedAt: shouldFail ? new Date() : null,
+      },
+    });
+
+    return { processed: true, job: toPlannerJobSummary(failed) };
+  }
 }
 
 export async function getPlannerJob(jobId: string): Promise<PlannerJobSummary | null> {
