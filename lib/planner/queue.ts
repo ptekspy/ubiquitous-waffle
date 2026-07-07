@@ -4,11 +4,31 @@ import { prisma } from "@/lib/db/prisma";
 import type { JsonObject, PlannerJobStatus, PlannerJobSummary } from "@/lib/types";
 
 const DEFAULT_OLLAMA_BASE_URL = "https://ollama.tik-track.com";
+const PLANNER_MODEL_KEYWORDS = [
+  "qwen3",
+  "qwen2.5",
+  "qwen",
+  "dolphin",
+  "nous",
+  "hermes",
+  "llama3.3",
+  "llama3.2",
+  "llama3.1",
+  "mistral-nemo",
+  "mistral",
+  "gemma3",
+  "gemma2",
+];
+const PLANNER_MODEL_PENALTIES = ["embed", "embedding", "vision", "clip", "code", "coder"];
+
+type OllamaModel = {
+  name?: string;
+  size?: number;
+  modified_at?: string;
+};
 
 type OllamaTagsResponse = {
-  models?: Array<{
-    name?: string;
-  }>;
+  models?: OllamaModel[];
 };
 
 type OllamaChatResponse = {
@@ -68,6 +88,26 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
+function modelKeywordScore(modelName: string): number {
+  const lowerName = modelName.toLowerCase();
+  const keywordIndex = PLANNER_MODEL_KEYWORDS.findIndex((keyword) => lowerName.includes(keyword));
+  const keywordScore = keywordIndex === -1 ? 0 : (PLANNER_MODEL_KEYWORDS.length - keywordIndex) * 1_000;
+  const penalty = PLANNER_MODEL_PENALTIES.some((keyword) => lowerName.includes(keyword)) ? 25_000 : 0;
+  const sizeMatch = lowerName.match(/(?:^|[^0-9])([0-9]+(?:\.[0-9]+)?)b(?:[^a-z]|$)/);
+  const sizeScore = sizeMatch ? Number.parseFloat(sizeMatch[1] ?? "0") * 100 : 0;
+
+  return keywordScore + sizeScore - penalty;
+}
+
+function choosePlannerModel(models: OllamaModel[]): string | null {
+  const candidates = models
+    .map((model) => ({ name: model.name?.trim() ?? "", score: modelKeywordScore(model.name ?? ""), size: model.size ?? 0 }))
+    .filter((model) => model.name.length > 0)
+    .sort((a, b) => b.score - a.score || b.size - a.size || a.name.localeCompare(b.name));
+
+  return candidates[0]?.name ?? null;
+}
+
 async function resolvePlannerModel(): Promise<string> {
   const configured = process.env.OLLAMA_PLANNER_MODEL?.trim();
   if (configured) return configured;
@@ -83,13 +123,13 @@ async function resolvePlannerModel(): Promise<string> {
   }
 
   const payload = (await response.json()) as OllamaTagsResponse;
-  const firstModel = payload.models?.find((model) => typeof model.name === "string" && model.name.trim().length > 0)?.name;
+  const selectedModel = choosePlannerModel(payload.models ?? []);
 
-  if (!firstModel) {
+  if (!selectedModel) {
     throw new Error("No Ollama planner model was configured and /api/tags returned no models.");
   }
 
-  return firstModel;
+  return selectedModel;
 }
 
 function stringifyList(values: string[]): string {
