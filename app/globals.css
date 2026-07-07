@@ -58,7 +58,8 @@ a {
 }
 
 button,
-input {
+input,
+textarea {
   font: inherit;
 }
 
@@ -86,6 +87,7 @@ input {
 .search-card,
 .empty-card,
 .error-card,
+.import-card,
 .profile-card,
 .panel,
 .stat-card {
@@ -114,7 +116,8 @@ input {
   gap: 10px;
 }
 
-.search-card input {
+.search-card input,
+.import-card textarea {
   width: 100%;
   min-width: 0;
   border: 1px solid var(--border);
@@ -125,11 +128,13 @@ input {
   padding: 16px 18px;
 }
 
-.search-card input:focus {
+.search-card input:focus,
+.import-card textarea:focus {
   border-color: rgba(255, 79, 145, 0.8);
 }
 
-.search-card button {
+.search-card button,
+.import-card button {
   border: 0;
   border-radius: 18px;
   background: linear-gradient(135deg, var(--accent), var(--accent-2));
@@ -139,7 +144,8 @@ input {
   padding: 0 24px;
 }
 
-.search-card button:disabled {
+.search-card button:disabled,
+.import-card button:disabled {
   cursor: not-allowed;
   filter: grayscale(1);
   opacity: 0.65;
@@ -149,6 +155,42 @@ input {
   display: block;
   margin-top: 10px;
   color: var(--muted);
+}
+
+.import-card {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 22px;
+  padding: 22px;
+}
+
+.import-card h2 {
+  margin: 8px 0;
+}
+
+.import-card p {
+  max-width: 720px;
+  margin-bottom: 0;
+  color: var(--muted);
+  line-height: 1.55;
+}
+
+.import-actions {
+  display: flex;
+  gap: 12px;
+}
+
+.import-actions button,
+.import-card > button {
+  min-height: 48px;
+}
+
+.import-card textarea {
+  min-height: 150px;
+  resize: vertical;
+  font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace;
+  font-size: 0.9rem;
+  line-height: 1.45;
 }
 
 .empty-card,
@@ -399,6 +441,7 @@ th {
     min-height: 54px;
   }
 
+  .import-actions,
   .example-row,
   .stat-grid,
   .panel-grid {
