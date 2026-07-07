@@ -94,6 +94,15 @@ function redditIdFromPermalink(value: unknown): string {
   return id ? `t3_${id}` : "";
 }
 
+function isCommentPermalink(value: unknown): boolean {
+  return /\/comments\/[^/]+\/[^/]+\/comment\//i.test(asString(value));
+}
+
+function isUrlOnlyTitle(title: string, permalink: string): boolean {
+  if (!/^https?:\/\//i.test(title)) return false;
+  return title === permalink || title.includes("/comments/");
+}
+
 function cleanSubreddit(rawSubreddit: unknown, title: string, permalink: unknown, username: string): string {
   const fromPermalink = subredditFromPermalink(permalink);
   const fromPayload = asString(rawSubreddit).replace(/^r\//i, "");
@@ -133,6 +142,7 @@ function toPost(raw: BrowserImportPost, index: number, username: string): Reddit
   const rawId = asString(raw.id);
 
   if (!title || !subreddit || permalink === "https://www.reddit.com") return null;
+  if (isCommentPermalink(permalink) || isUrlOnlyTitle(title, permalink)) return null;
 
   return {
     id: rawId || redditIdFromPermalink(raw.permalink) || `browser-post-${index}`,
@@ -205,10 +215,12 @@ function parsePayload(raw: string): BrowserImportPayload {
 export function parseBrowserImport(raw: string): RedditAccountData {
   const payload = parsePayload(raw);
   const profile = toProfile(payload);
-  const rawPostCount = Array.isArray(payload.posts) ? payload.posts.length : 0;
-  const parsedPosts = Array.isArray(payload.posts)
-    ? payload.posts.map((post, index) => toPost(post, index, profile.username)).filter((post): post is RedditPost => Boolean(post))
-    : [];
+  const rawPosts = Array.isArray(payload.posts) ? payload.posts : [];
+  const rawPostCount = rawPosts.length;
+  const commentPermalinkRows = rawPosts.filter((post) => isCommentPermalink(post.permalink)).length;
+  const parsedPosts = rawPosts
+    .map((post, index) => toPost(post, index, profile.username))
+    .filter((post): post is RedditPost => Boolean(post));
   const posts = dedupePosts(parsedPosts);
   const comments = Array.isArray(payload.comments)
     ? payload.comments.map(toComment).filter((comment): comment is RedditComment => Boolean(comment))
@@ -225,7 +237,8 @@ export function parseBrowserImport(raw: string): RedditAccountData {
     comments,
     warnings: [
       "Imported from browser capture because Reddit blocked server-side public JSON.",
-      removedPostRows > 0 ? `Cleaned ${removedPostRows} duplicate or incomplete browser post rows.` : null,
+      removedPostRows > 0 ? `Cleaned ${removedPostRows} duplicate, comment-link, or incomplete browser post rows.` : null,
+      commentPermalinkRows > 0 ? `Ignored ${commentPermalinkRows} comment permalink rows so they do not count as posts.` : null,
       posts.length === 0 ? "No posts were found in the browser import." : null,
       comments.length === 0 ? "No comments were found in the browser import." : null,
     ].filter((warning): warning is string => Boolean(warning)),
