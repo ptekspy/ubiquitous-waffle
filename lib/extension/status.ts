@@ -14,3 +14,16 @@ export function extensionStepState(state: ExtensionState): StepState {
   if (state === "missing" || state === "error") return "error";
   return "active";
 }
+
+export function usernameStepState(hasValidUsername: boolean, extensionReady: boolean): StepState {
+  if (hasValidUsername) return "done";
+  if (extensionReady) return "active";
+  return "todo";
+}
+
+export function captureStepState(extensionState: ExtensionState, loading: boolean, hasData: boolean, canScan: boolean): StepState {
+  if (extensionState === "scanning" || loading) return "active";
+  if (hasData) return "done";
+  if (canScan) return "active";
+  return "todo";
+}
