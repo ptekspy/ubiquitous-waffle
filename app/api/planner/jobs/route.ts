@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { requireCurrentUser } from "@/lib/auth/session";
 import { enqueuePlannerJobForScan, getPlannerJob } from "@/lib/planner/queue";
 
 export const dynamic = "force-dynamic";
@@ -14,13 +15,16 @@ type CreatePlannerJobBody = {
 };
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const user = await requireCurrentUser().catch(() => null);
+  if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
+
   const jobId = request.nextUrl.searchParams.get("jobId");
 
   if (!jobId) {
     return NextResponse.json<ErrorResponse>({ error: "jobId is required." }, { status: 400 });
   }
 
-  const job = await getPlannerJob(jobId);
+  const job = await getPlannerJob(jobId, user.id);
   if (!job) {
     return NextResponse.json<ErrorResponse>({ error: "Planner job not found." }, { status: 404 });
   }
@@ -29,6 +33,9 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
 }
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
+  const user = await requireCurrentUser().catch(() => null);
+  if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
+
   let body: CreatePlannerJobBody;
 
   try {
@@ -42,7 +49,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
-    const job = await enqueuePlannerJobForScan(body.scanId);
+    const job = await enqueuePlannerJobForScan(body.scanId, user.id);
     return NextResponse.json({ job });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to enqueue planner job.";
