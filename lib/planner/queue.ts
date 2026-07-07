@@ -5,6 +5,12 @@ import type { JsonObject, PlannerJobStatus, PlannerJobSummary } from "@/lib/type
 
 const DEFAULT_OLLAMA_BASE_URL = "https://ollama.tik-track.com";
 
+type OllamaTagsResponse = {
+  models?: Array<{
+    name?: string;
+  }>;
+};
+
 type PlannerJobRecord = {
   id: string;
   status: PrismaPlannerJobStatus;
@@ -53,4 +59,33 @@ function ollamaHeaders(): HeadersInit {
 
 function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
+async function resolvePlannerModel(): Promise<string> {
+  const configured = process.env.OLLAMA_PLANNER_MODEL?.trim();
+  if (configured) return configured;
+
+  const response = await fetch(`${ollamaBaseUrl()}/api/tags`, {
+    method: "GET",
+    cache: "no-store",
+    headers: ollamaHeaders(),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Unable to list Ollama models. ${response.status} ${response.statusText}`);
+  }
+
+  const payload = (await response.json()) as OllamaTagsResponse;
+  const firstModel = payload.models?.find((model) => typeof model.name === "string" && model.name.trim().length > 0)?.name;
+
+  if (!firstModel) {
+    throw new Error("No Ollama planner model was configured and /api/tags returned no models.");
+  }
+
+  return firstModel;
+}
+
+export async function getPlannerJob(jobId: string): Promise<PlannerJobSummary | null> {
+  const job = await prisma.plannerJob.findUnique({ where: { id: jobId } });
+  return job ? toPlannerJobSummary(job) : null;
 }
