@@ -1,11 +1,49 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
+import type { FormEvent } from "react";
 
 import { BROWSER_CAPTURE_SNIPPET } from "@/lib/browser-capture-snippet";
 import type { AnalyzeResponse, ContentTypeMetric, SubredditMetric, TimelinePoint } from "@/lib/types";
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
+type ExtensionState = "not-configured" | "checking" | "missing" | "installed" | "scanning" | "error";
+
+type ExtensionPingResponse = {
+  ok?: boolean;
+  status?: string;
+  version?: string;
+  name?: string;
+  error?: string;
+};
+
+type ExtensionScanResponse =
+  | {
+      ok: true;
+      status: "captured";
+      payload: unknown;
+    }
+  | {
+      ok: false;
+      status?: string;
+      error: string;
+    };
+
+type ChromeRuntime = {
+  sendMessage?: (extensionId: string, message: unknown, callback: (response: unknown) => void) => void;
+  lastError?: { message?: string };
+};
+
+declare global {
+  interface Window {
+    chrome?: {
+      runtime?: ChromeRuntime;
+    };
+  }
+}
+
+const EXTENSION_ID = process.env.NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID?.trim() ?? "";
+const EXTENSION_STORE_URL = process.env.NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE_URL?.trim() ?? "";
 
 function numberFormat(value: number): string {
   return new Intl.NumberFormat("en-GB").format(value);
@@ -27,12 +65,48 @@ function formatDate(createdUtc: number | null): string {
   }).format(new Date(createdUtc * 1000));
 }
 
+function normaliseUsernameInput(value: string): string {
+  return value
+    .trim()
+    .replace(/^https?:\/\/(www\.)?reddit\.com\/user\//i, "")
+    .replace(/^https?:\/\/(www\.)?reddit\.com\/u\//i, "")
+    .replace(/^u\//i, "")
+    .replace(/^@/, "")
+    .split(/[/?#]/)[0]
+    .trim();
+}
+
 async function readJsonResponse(response: Response): Promise<AnalyzeResponse | { error: string }> {
   try {
     return (await response.json()) as AnalyzeResponse | { error: string };
   } catch {
     return { error: "The server returned a non-JSON response." };
   }
+}
+
+function sendExtensionMessage<TResponse>(message: unknown): Promise<TResponse> {
+  return new Promise((resolve, reject) => {
+    if (!EXTENSION_ID) {
+      reject(new Error("PaidPolitely extension ID is not configured."));
+      return;
+    }
+
+    const runtime = window.chrome?.runtime;
+    if (!runtime?.sendMessage) {
+      reject(new Error("Chrome extension messaging is unavailable in this browser."));
+      return;
+    }
+
+    runtime.sendMessage(EXTENSION_ID, message, (response) => {
+      const lastError = window.chrome?.runtime?.lastError;
+      if (lastError?.message) {
+        reject(new Error(lastError.message));
+        return;
+      }
+
+      resolve(response as TResponse);
+    });
+  });
 }
 
 function StatCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
@@ -52,7 +126,7 @@ function EmptyState() {
       <div className="example-row">
         <span>Public profile</span>
         <span>Recent posts</span>
-        <span>Browser import</span>
+        <span>Extension bridge</span>
         <span>Subreddit signals</span>
       </div>
     </section>
@@ -70,6 +144,79 @@ function WarningCard({ warnings }: { warnings: string[] }) {
           <li key={warning}>{warning}</li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+function ExtensionBridgeCard({
+  state,
+  message,
+  version,
+  username,
+  loading,
+  onCheck,
+  onScan,
+}: {
+  state: ExtensionState;
+  message: string;
+  version: string | null;
+  username: string;
+  loading: boolean;
+  onCheck: () => void;
+  onScan: () => void;
+}) {
+  const normalisedUsername = normaliseUsernameInput(username);
+  const canScan = state === "installed" && !loading && normalisedUsername.length > 0;
+  const statusLabel =
+    state === "installed"
+      ? `Installed${version ? ` · v${version}` : ""}`
+      : state === "scanning"
+        ? "Scanning Reddit"
+        : state === "checking"
+          ? "Checking"
+          : state === "missing"
+            ? "Not detected"
+            : state === "not-configured"
+              ? "Extension ID needed"
+              : "Extension error";
+
+  return (
+    <section className="extension-card">
+      <div className="extension-card-header">
+        <div>
+          <span className="eyebrow">One-click browser scan</span>
+          <h2>PaidPolitely Capture extension</h2>
+        </div>
+        <span className={`status-pill status-${state}`}>{statusLabel}</span>
+      </div>
+      <p>
+        The website checks for the installed extension. If it is installed, it can open or focus the Reddit profile tab,
+        signpost the user if Reddit needs login/age confirmation, scan visible post metadata, and import the result here.
+      </p>
+      {message ? <p className="bridge-message">{message}</p> : null}
+      <div className="bridge-actions">
+        <button type="button" onClick={onCheck} disabled={state === "checking" || state === "scanning"}>
+          {state === "checking" ? "Checking..." : "Check extension"}
+        </button>
+        <button type="button" onClick={onScan} disabled={!canScan}>
+          {state === "scanning" || loading ? "Scanning..." : normalisedUsername ? `Scan u/${normalisedUsername}` : "Enter username to scan"}
+        </button>
+        {EXTENSION_STORE_URL ? (
+          <a className="secondary-link" href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">
+            Install extension
+          </a>
+        ) : null}
+      </div>
+      <div className="install-steps">
+        <strong>Local manual install flow</strong>
+        <ol>
+          <li>Open <code>chrome://extensions</code>.</li>
+          <li>Enable <strong>Developer mode</strong>.</li>
+          <li>Click <strong>Load unpacked</strong> and select this repo&apos;s <code>extension</code> folder.</li>
+          <li>Copy the unpacked extension ID into <code>NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID</code>.</li>
+          <li>Restart <code>pnpm dev</code>, reload this page, then click <strong>Check extension</strong>.</li>
+        </ol>
+      </div>
     </section>
   );
 }
@@ -96,11 +243,11 @@ function BrowserImportCard({
   return (
     <section className="import-card">
       <div>
-        <span className="eyebrow">Fallback when Reddit returns 403</span>
+        <span className="eyebrow">Manual fallback</span>
         <h2>Browser capture import</h2>
         <p>
-          Open the Reddit profile in your browser, paste the capture snippet into DevTools console, let it auto-scroll the
-          profile, then paste the copied JSON here. If clipboard access is blocked, the snippet will show a manual copy box.
+          Keep this as a fallback while the extension is in local development. Open the Reddit profile, paste the capture
+          snippet into DevTools console, let it auto-scroll the profile, then paste the copied JSON here.
         </p>
       </div>
       <div className="import-actions">
@@ -193,6 +340,75 @@ export default function Home() {
   const [state, setState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyzeResponse | null>(null);
+  const [extensionState, setExtensionState] = useState<ExtensionState>(EXTENSION_ID ? "checking" : "not-configured");
+  const [extensionMessage, setExtensionMessage] = useState(
+    EXTENSION_ID
+      ? "Checking whether PaidPolitely Capture is installed."
+      : "Set NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID after loading the unpacked extension. Until then, the website correctly treats the extension bridge as unavailable."
+  );
+  const [extensionVersion, setExtensionVersion] = useState<string | null>(null);
+
+  useEffect(() => {
+    void checkExtension();
+  }, []);
+
+  async function checkExtension() {
+    if (!EXTENSION_ID) {
+      setExtensionState("not-configured");
+      setExtensionVersion(null);
+      setExtensionMessage("No extension ID is configured yet. Load the unpacked extension, copy its ID, add it to .env.local, then restart the dev server.");
+      return;
+    }
+
+    setExtensionState("checking");
+    setExtensionMessage("Checking for PaidPolitely Capture...");
+
+    try {
+      const response = await sendExtensionMessage<ExtensionPingResponse>({ type: "PAIDPOLITELY_PING" });
+      if (response?.ok) {
+        setExtensionState("installed");
+        setExtensionVersion(response.version ?? null);
+        setExtensionMessage("PaidPolitely Capture is installed and ready. The website can now request one-click Reddit scans.");
+        return;
+      }
+
+      setExtensionState("error");
+      setExtensionVersion(null);
+      setExtensionMessage(response?.error ?? "PaidPolitely Capture responded, but not with a valid ping response.");
+    } catch (extensionError) {
+      setExtensionState("missing");
+      setExtensionVersion(null);
+      setExtensionMessage(extensionError instanceof Error ? extensionError.message : "PaidPolitely Capture was not detected.");
+    }
+  }
+
+  async function importRawPayload(raw: string) {
+    setState("loading");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/analyze/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw }),
+      });
+      const payload = await readJsonResponse(response);
+
+      if (!response.ok) {
+        setState("error");
+        setError("error" in payload ? payload.error : "Unable to analyse browser import.");
+        return false;
+      }
+
+      setData(payload as AnalyzeResponse);
+      setState("loaded");
+      return true;
+    } catch {
+      setState("error");
+      setError("The browser import request failed before the API could respond.");
+      return false;
+    }
+  }
 
   async function analyseAccount(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -218,38 +434,58 @@ export default function Home() {
   }
 
   async function analyseImport() {
+    await importRawPayload(importPayload);
+  }
+
+  async function scanWithExtension() {
+    const normalisedUsername = normaliseUsernameInput(username);
+    if (!/^[A-Za-z0-9_-]{3,20}$/.test(normalisedUsername)) {
+      setState("error");
+      setError("Enter a valid Reddit username before scanning with the extension.");
+      return;
+    }
+
     setState("loading");
     setError(null);
+    setExtensionState("scanning");
+    setExtensionMessage(`Opening or focusing Reddit for u/${normalisedUsername}. If Reddit asks for login or age confirmation, follow the signpost in the Reddit tab.`);
 
     try {
-      const response = await fetch("/api/analyze/import", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ raw: importPayload }),
+      const response = await sendExtensionMessage<ExtensionScanResponse>({
+        type: "PAIDPOLITELY_SCAN_REDDIT_PROFILE",
+        username: normalisedUsername,
       });
-      const payload = await readJsonResponse(response);
 
       if (!response.ok) {
         setState("error");
-        setError("error" in payload ? payload.error : "Unable to analyse browser import.");
+        setExtensionState("installed");
+        setExtensionMessage(response.error);
+        setError(response.error);
         return;
       }
 
-      setData(payload as AnalyzeResponse);
-      setState("loaded");
-    } catch {
+      const raw = JSON.stringify(response.payload, null, 2);
+      setImportPayload(raw);
+      const imported = await importRawPayload(raw);
+      setExtensionState("installed");
+      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername} through the extension.` : "The extension captured data, but the app could not import it.");
+    } catch (extensionError) {
       setState("error");
-      setError("The browser import request failed before the API could respond.");
+      setExtensionState("missing");
+      const message = extensionError instanceof Error ? extensionError.message : "PaidPolitely Capture was not detected.";
+      setExtensionMessage(message);
+      setError(message);
     }
   }
 
   return (
     <main>
       <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.1.5</div>
+        <div className="eyebrow">PaidPolitely v0.2.0</div>
         <h1>Reddit account analytics without OAuth.</h1>
         <p>
-          Enter a Reddit username for a server-side attempt, or use browser capture when Reddit blocks public JSON.
+          Enter a Reddit username, scan with the local extension bridge, or fall back to browser capture when Reddit blocks
+          public JSON.
         </p>
 
         <form onSubmit={analyseAccount} className="search-card">
@@ -267,11 +503,21 @@ export default function Home() {
               {state === "loading" ? "Analysing..." : "Analyse"}
             </button>
           </div>
-          <small>No Reddit password, cookies, or OAuth app required.</small>
+          <small>No Reddit password, cookies, OAuth app, or session token required.</small>
         </form>
       </section>
 
       {state === "error" ? <div className="error-card">{error}</div> : null}
+
+      <ExtensionBridgeCard
+        state={extensionState}
+        message={extensionMessage}
+        version={extensionVersion}
+        username={username}
+        loading={state === "loading"}
+        onCheck={checkExtension}
+        onScan={scanWithExtension}
+      />
 
       <BrowserImportCard
         importPayload={importPayload}
