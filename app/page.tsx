@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 
 import { AuthGate } from "@/components/auth-gate";
+import { BrowserPostCrawler } from "@/components/browser-post-crawler";
 import { Dashboard } from "@/components/dashboard";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorCard } from "@/components/error-card";
@@ -191,6 +192,7 @@ function AuthenticatedDashboard() {
   return (
     <main className="min-h-screen bg-[#120b16] bg-[radial-gradient(circle_at_top_left,rgba(255,79,145,0.28),transparent_36rem),radial-gradient(circle_at_top_right,rgba(255,184,107,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.025),transparent_26rem)] px-4 py-10 text-[#fff8fb] sm:px-6 lg:px-8">
       <div className="mx-auto w-full max-w-[1180px]">
+        <BrowserPostCrawler scanId={data?.scanId ?? null} extensionState={extensionState} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
         <UserMenu />
         <Hero />
 
