@@ -6,6 +6,31 @@ import type { AnalyzeResponse, ContentTypeMetric, SubredditMetric, TimelinePoint
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
 
+const BROWSER_CAPTURE_SNIPPET = `(() => {
+  const text = (node) => node?.textContent?.trim() ?? "";
+  const numberFrom = (value) => {
+    const raw = String(value ?? "").trim().toLowerCase().replace(/,/g, "");
+    const match = raw.match(/-?\\d+(?:\\.\\d+)?\\s*[km]?/);
+    if (!match) return 0;
+    const token = match[0].replace(/\\s/g, "");
+    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : 1;
+    return Math.round(parseFloat(token) * multiplier);
+  };
+  const username = location.pathname.match(/\\/user\\/([^/]+)/i)?.[1] || location.pathname.match(/\\/u\\/([^/]+)/i)?.[1] || document.querySelector('[data-testid="profile-name"]')?.textContent?.replace(/^u\\//i, "") || "";
+  const postNodes = Array.from(document.querySelectorAll('shreddit-post, article, [data-testid="post-container"]')).slice(0, 100);
+  const posts = postNodes.map((node, index) => {
+    const title = text(node.querySelector('[slot="title"], h1, h2, h3, a[slot="title"]')) || text(node.querySelector('a[href*="/comments/"]'));
+    const href = node.getAttribute?.('permalink') || node.querySelector('a[href*="/comments/"]')?.getAttribute('href') || "";
+    const subreddit = node.getAttribute?.('subreddit-prefixed-name')?.replace(/^r\\//i, "") || text(node.querySelector('a[href^="/r/"], a[href*="reddit.com/r/"]')).replace(/^r\\//i, "");
+    const score = numberFrom(node.getAttribute?.('score') || text(node.querySelector('[aria-label*="upvote"], [id*="score"], faceplate-number')));
+    const numComments = numberFrom(node.getAttribute?.('comment-count') || text(node.querySelector('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
+    return { id: node.getAttribute?.('id') || \`browser-post-\${index}\`, title, subreddit, permalink: href, score, numComments, createdUtc: Math.floor(Date.now() / 1000) };
+  }).filter((post) => post.title && post.subreddit);
+  const payload = { source: "paidpolitely-reddit-browser-import-v1", capturedAt: new Date().toISOString(), username, profile: { username }, posts, comments: [] };
+  copy(JSON.stringify(payload, null, 2));
+  console.log("PaidPolitely capture copied", payload);
+})();`;
+
 function numberFormat(value: number): string {
   return new Intl.NumberFormat("en-GB").format(value);
 }
@@ -26,6 +51,14 @@ function formatDate(createdUtc: number | null): string {
   }).format(new Date(createdUtc * 1000));
 }
 
+async function readJsonResponse(response: Response): Promise<AnalyzeResponse | { error: string }> {
+  try {
+    return (await response.json()) as AnalyzeResponse | { error: string };
+  } catch {
+    return { error: "The server returned a non-JSON response." };
+  }
+}
+
 function StatCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
     <article className="stat-card">
@@ -39,11 +72,11 @@ function StatCard({ label, value, detail }: { label: string; value: string; deta
 function EmptyState() {
   return (
     <section className="empty-card">
-      <p>Try a public Reddit username to generate a quick v0.1.1 account read.</p>
+      <p>Try a public Reddit username first. If Reddit blocks the server request, use the browser capture fallback below.</p>
       <div className="example-row">
         <span>Public profile</span>
         <span>Recent posts</span>
-        <span>Recent comments</span>
+        <span>Browser import</span>
         <span>Subreddit signals</span>
       </div>
     </section>
@@ -61,6 +94,52 @@ function WarningCard({ warnings }: { warnings: string[] }) {
           <li key={warning}>{warning}</li>
         ))}
       </ul>
+    </section>
+  );
+}
+
+function BrowserImportCard({
+  importPayload,
+  setImportPayload,
+  onImport,
+  loading,
+}: {
+  importPayload: string;
+  setImportPayload: (value: string) => void;
+  onImport: () => void;
+  loading: boolean;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  async function copySnippet() {
+    await navigator.clipboard.writeText(BROWSER_CAPTURE_SNIPPET);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1800);
+  }
+
+  return (
+    <section className="import-card">
+      <div>
+        <span className="eyebrow">Fallback when Reddit returns 403</span>
+        <h2>Browser capture import</h2>
+        <p>
+          Open the Reddit profile in your browser, paste the capture snippet into DevTools console, then paste the copied
+          JSON here.
+        </p>
+      </div>
+      <div className="import-actions">
+        <button type="button" onClick={copySnippet}>
+          {copied ? "Copied" : "Copy capture snippet"}
+        </button>
+      </div>
+      <textarea
+        value={importPayload}
+        onChange={(event) => setImportPayload(event.target.value)}
+        placeholder='Paste the copied { "source": "paidpolitely-reddit-browser-import-v1", ... } JSON here'
+      />
+      <button type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
+        {loading ? "Importing..." : "Analyse browser import"}
+      </button>
     </section>
   );
 }
@@ -134,6 +213,7 @@ function Timeline({ rows }: { rows: TimelinePoint[] }) {
 
 export default function Home() {
   const [username, setUsername] = useState("");
+  const [importPayload, setImportPayload] = useState("");
   const [state, setState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyzeResponse | null>(null);
@@ -143,26 +223,57 @@ export default function Home() {
     setState("loading");
     setError(null);
 
-    const response = await fetch(`/api/analyze?username=${encodeURIComponent(username)}`);
-    const payload = (await response.json()) as AnalyzeResponse | { error: string };
+    try {
+      const response = await fetch(`/api/analyze?username=${encodeURIComponent(username)}`);
+      const payload = await readJsonResponse(response);
 
-    if (!response.ok) {
+      if (!response.ok) {
+        setState("error");
+        setError("error" in payload ? payload.error : "Unable to analyse this account.");
+        return;
+      }
+
+      setData(payload as AnalyzeResponse);
+      setState("loaded");
+    } catch {
       setState("error");
-      setError("error" in payload ? payload.error : "Unable to analyse this account.");
-      return;
+      setError("The request failed before the API could respond. Use the browser capture fallback below.");
     }
+  }
 
-    setData(payload as AnalyzeResponse);
-    setState("loaded");
+  async function analyseImport() {
+    setState("loading");
+    setError(null);
+
+    try {
+      const response = await fetch("/api/analyze/import", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ raw: importPayload }),
+      });
+      const payload = await readJsonResponse(response);
+
+      if (!response.ok) {
+        setState("error");
+        setError("error" in payload ? payload.error : "Unable to analyse browser import.");
+        return;
+      }
+
+      setData(payload as AnalyzeResponse);
+      setState("loaded");
+    } catch {
+      setState("error");
+      setError("The browser import request failed before the API could respond.");
+    }
   }
 
   return (
     <main>
       <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.1.1</div>
+        <div className="eyebrow">PaidPolitely v0.1.2</div>
         <h1>Reddit account analytics without OAuth.</h1>
         <p>
-          Enter a Reddit username and get a lightweight account read from public profile, post, and comment JSON.
+          Enter a Reddit username for a server-side attempt, or use browser capture when Reddit blocks public JSON.
         </p>
 
         <form onSubmit={analyseAccount} className="search-card">
@@ -185,6 +296,13 @@ export default function Home() {
       </section>
 
       {state === "error" ? <div className="error-card">{error}</div> : null}
+
+      <BrowserImportCard
+        importPayload={importPayload}
+        setImportPayload={setImportPayload}
+        onImport={analyseImport}
+        loading={state === "loading"}
+      />
 
       {!data ? (
         <EmptyState />
