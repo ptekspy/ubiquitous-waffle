@@ -2,8 +2,8 @@ const REDDIT_PROFILE_URL = "https://www.reddit.com/user/{username}/submitted/";
 const OVERLAY_TIMEOUT_MS = 10 * 60 * 1000;
 const TAB_LOAD_TIMEOUT_MS = 45 * 1000;
 
-chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
-  handleExternalMessage(message, sender)
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  handleMessage(message, sender)
     .then(sendResponse)
     .catch((error) => {
       console.error("PaidPolitely extension error", error);
@@ -13,7 +13,18 @@ chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => 
   return true;
 });
 
-async function handleExternalMessage(message) {
+chrome.runtime.onMessageExternal.addListener((message, sender, sendResponse) => {
+  handleMessage(message, sender)
+    .then(sendResponse)
+    .catch((error) => {
+      console.error("PaidPolitely extension error", error);
+      sendResponse({ ok: false, status: "extension_error", error: error?.message || "PaidPolitely extension failed." });
+    });
+
+  return true;
+});
+
+async function handleMessage(message) {
   if (!message || typeof message !== "object") {
     return { ok: false, status: "bad_request", error: "Missing PaidPolitely message." };
   }
@@ -24,6 +35,7 @@ async function handleExternalMessage(message) {
       status: "installed",
       version: chrome.runtime.getManifest().version,
       name: chrome.runtime.getManifest().name,
+      bridge: "runtime",
     };
   }
 
