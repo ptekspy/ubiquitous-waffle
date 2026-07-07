@@ -1,3 +1,4 @@
+import { getPostType } from "@/lib/content/post-classification";
 import type {
   AccountAnalytics,
   ContentTypeMetric,
@@ -22,19 +23,6 @@ function dateKey(createdUtc: number): string {
 
 function postingHourUtc(createdUtc: number): number {
   return new Date(createdUtc * 1000).getUTCHours();
-}
-
-function getPostType(post: RedditPost): string {
-  const hint = post.postHint?.toLowerCase();
-  const url = post.url?.toLowerCase() ?? "";
-  const domain = post.domain?.toLowerCase() ?? "";
-
-  if (post.isSelf) return "text";
-  if (hint?.includes("video") || domain.includes("v.redd.it") || url.includes("redgifs.com")) return "video";
-  if (hint?.includes("image") || /\.(jpg|jpeg|png|gif|webp)(\?|$)/.test(url)) return "image";
-  if (domain.includes("reddit.com") && url.includes("/gallery/")) return "gallery";
-
-  return "link";
 }
 
 function buildSubredditMetrics(posts: RedditPost[], comments: RedditComment[]): SubredditMetric[] {
