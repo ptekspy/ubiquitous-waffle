@@ -14,6 +14,7 @@ type ExtensionPingResponse = {
   status?: string;
   version?: string;
   name?: string;
+  bridge?: string;
   error?: string;
 };
 
@@ -44,6 +45,8 @@ declare global {
 
 const EXTENSION_ID = process.env.NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID?.trim() ?? "";
 const EXTENSION_STORE_URL = process.env.NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE_URL?.trim() ?? "";
+const BRIDGE_REQUEST = "PAIDPOLITELY_EXTENSION_BRIDGE_REQUEST";
+const BRIDGE_RESPONSE = "PAIDPOLITELY_EXTENSION_BRIDGE_RESPONSE";
 
 function numberFormat(value: number): string {
   return new Intl.NumberFormat("en-GB").format(value);
@@ -84,10 +87,41 @@ async function readJsonResponse(response: Response): Promise<AnalyzeResponse | {
   }
 }
 
-function sendExtensionMessage<TResponse>(message: unknown): Promise<TResponse> {
+function sendBridgeMessage<TResponse>(message: unknown, timeoutMs = 2200): Promise<TResponse> {
+  return new Promise((resolve, reject) => {
+    const requestId = `paidpolitely-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const timeout = window.setTimeout(() => {
+      window.removeEventListener("message", onMessage);
+      reject(new Error("PaidPolitely Capture bridge was not detected on this page. Reload the page after loading/reloading the extension."));
+    }, timeoutMs);
+
+    function onMessage(event: MessageEvent) {
+      if (event.source !== window) return;
+      const data = event.data;
+      if (!data || data.source !== "paidpolitely-extension" || data.type !== BRIDGE_RESPONSE || data.requestId !== requestId) return;
+
+      window.clearTimeout(timeout);
+      window.removeEventListener("message", onMessage);
+      resolve(data.response as TResponse);
+    }
+
+    window.addEventListener("message", onMessage);
+    window.postMessage(
+      {
+        source: "paidpolitely-web",
+        type: BRIDGE_REQUEST,
+        requestId,
+        payload: message,
+      },
+      window.location.origin
+    );
+  });
+}
+
+function sendDirectExtensionMessage<TResponse>(message: unknown): Promise<TResponse> {
   return new Promise((resolve, reject) => {
     if (!EXTENSION_ID) {
-      reject(new Error("PaidPolitely extension ID is not configured."));
+      reject(new Error("No extension ID fallback is configured."));
       return;
     }
 
@@ -107,6 +141,15 @@ function sendExtensionMessage<TResponse>(message: unknown): Promise<TResponse> {
       resolve(response as TResponse);
     });
   });
+}
+
+async function sendExtensionMessage<TResponse>(message: unknown): Promise<TResponse> {
+  try {
+    return await sendBridgeMessage<TResponse>(message);
+  } catch (bridgeError) {
+    if (!EXTENSION_ID) throw bridgeError;
+    return sendDirectExtensionMessage<TResponse>(message);
+  }
 }
 
 function StatCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
@@ -190,8 +233,9 @@ function ExtensionBridgeCard({
         <span className={`status-pill status-${state}`}>{statusLabel}</span>
       </div>
       <p>
-        The website checks for the installed extension. If it is installed, it can open or focus the Reddit profile tab,
-        signpost the user if Reddit needs login/age confirmation, scan visible post metadata, and import the result here.
+        The website checks for the installed extension through a local content-script bridge. If it is installed, it can open
+        or focus the Reddit profile tab, signpost the user if Reddit needs login/age confirmation, scan visible post metadata,
+        and import the result here.
       </p>
       {message ? <p className="bridge-message">{message}</p> : null}
       <div className="bridge-actions">
@@ -213,8 +257,8 @@ function ExtensionBridgeCard({
           <li>Open <code>chrome://extensions</code>.</li>
           <li>Enable <strong>Developer mode</strong>.</li>
           <li>Click <strong>Load unpacked</strong> and select this repo&apos;s <code>extension</code> folder.</li>
-          <li>Copy the unpacked extension ID into <code>NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID</code>.</li>
-          <li>Restart <code>pnpm dev</code>, reload this page, then click <strong>Check extension</strong>.</li>
+          <li>Click <strong>Reload</strong> on the extension card after every repo update.</li>
+          <li>Reload this website tab so the extension content-script bridge can attach.</li>
         </ol>
       </div>
     </section>
@@ -340,12 +384,8 @@ export default function Home() {
   const [state, setState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [data, setData] = useState<AnalyzeResponse | null>(null);
-  const [extensionState, setExtensionState] = useState<ExtensionState>(EXTENSION_ID ? "checking" : "not-configured");
-  const [extensionMessage, setExtensionMessage] = useState(
-    EXTENSION_ID
-      ? "Checking whether PaidPolitely Capture is installed."
-      : "Set NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID after loading the unpacked extension. Until then, the website correctly treats the extension bridge as unavailable."
-  );
+  const [extensionState, setExtensionState] = useState<ExtensionState>("checking");
+  const [extensionMessage, setExtensionMessage] = useState("Checking whether PaidPolitely Capture is installed on this page.");
   const [extensionVersion, setExtensionVersion] = useState<string | null>(null);
 
   useEffect(() => {
@@ -353,22 +393,15 @@ export default function Home() {
   }, []);
 
   async function checkExtension() {
-    if (!EXTENSION_ID) {
-      setExtensionState("not-configured");
-      setExtensionVersion(null);
-      setExtensionMessage("No extension ID is configured yet. Load the unpacked extension, copy its ID, add it to .env.local, then restart the dev server.");
-      return;
-    }
-
     setExtensionState("checking");
-    setExtensionMessage("Checking for PaidPolitely Capture...");
+    setExtensionMessage("Checking for PaidPolitely Capture. If you just installed or reloaded the extension, reload this website tab too.");
 
     try {
       const response = await sendExtensionMessage<ExtensionPingResponse>({ type: "PAIDPOLITELY_PING" });
       if (response?.ok) {
         setExtensionState("installed");
         setExtensionVersion(response.version ?? null);
-        setExtensionMessage("PaidPolitely Capture is installed and ready. The website can now request one-click Reddit scans.");
+        setExtensionMessage(`PaidPolitely Capture is installed and ready${response.bridge ? ` via ${response.bridge}` : ""}.`);
         return;
       }
 
@@ -481,7 +514,7 @@ export default function Home() {
   return (
     <main>
       <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.2.0</div>
+        <div className="eyebrow">PaidPolitely v0.2.1</div>
         <h1>Reddit account analytics without OAuth.</h1>
         <p>
           Enter a Reddit username, scan with the local extension bridge, or fall back to browser capture when Reddit blocks
