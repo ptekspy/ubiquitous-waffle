@@ -17,6 +17,51 @@ export type AnalysisApiResult =
       error: string;
     };
 
+export type WorkspaceResponse = {
+  settings: {
+    redditUsername: string | null;
+  };
+  latest: AnalyzeResponse | null;
+};
+
+export type WorkspaceApiResult =
+  | {
+      ok: true;
+      data: WorkspaceResponse;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+export async function fetchWorkspace(): Promise<WorkspaceApiResult> {
+  try {
+    const response = await fetch(`/api/workspace?ts=${Date.now()}`, { cache: "no-store" });
+    const payload = await readJsonResponse<WorkspaceResponse, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(payload)) return { ok: false, error: payload.error };
+    return { ok: true, data: payload };
+  } catch {
+    return { ok: false, error: "The workspace request failed before the API could respond." };
+  }
+}
+
+export async function saveWorkspaceRedditUsername(redditUsername: string): Promise<WorkspaceApiResult> {
+  try {
+    const response = await fetch("/api/workspace", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ redditUsername }),
+    });
+    const payload = await readJsonResponse<WorkspaceResponse, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(payload)) return { ok: false, error: payload.error };
+    return { ok: true, data: payload };
+  } catch {
+    return { ok: false, error: "The workspace save request failed before the API could respond." };
+  }
+}
+
 export async function importBrowserPayload(raw: string): Promise<AnalysisApiResult> {
   try {
     const response = await fetch("/api/analyze/import", {
