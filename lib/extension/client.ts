@@ -1,5 +1,5 @@
 import { BRIDGE_REQUEST, BRIDGE_RESPONSE, EXTENSION_ID } from "./constants";
-import type { ExtensionMessage, WindowWithChromeRuntime } from "./types";
+import type { ChromeRuntime, ExtensionMessage, WindowWithChromeRuntime } from "./types";
 
 type BridgeResponseMessage<TResponse> = {
   source: "paidpolitely-extension";
@@ -22,8 +22,8 @@ function isBridgeResponseMessage<TResponse>(value: unknown, requestId: string): 
   return value.source === "paidpolitely-extension" && value.type === BRIDGE_RESPONSE && value.requestId === requestId;
 }
 
-function getChromeRuntime(): WindowWithChromeRuntime["chrome"] extends { runtime?: infer TRuntime } ? TRuntime : never {
-  return (window as WindowWithChromeRuntime).chrome?.runtime as WindowWithChromeRuntime["chrome"] extends { runtime?: infer TRuntime } ? TRuntime : never;
+function getChromeRuntime(): ChromeRuntime | undefined {
+  return (window as WindowWithChromeRuntime).chrome?.runtime;
 }
 
 function sendBridgeMessage<TResponse>(message: ExtensionMessage, timeoutMs = 2200): Promise<TResponse> {
