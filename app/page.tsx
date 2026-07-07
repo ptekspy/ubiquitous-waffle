@@ -49,6 +49,12 @@ const EXTENSION_STORE_URL = process.env.NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE
 const BRIDGE_REQUEST = "PAIDPOLITELY_EXTENSION_BRIDGE_REQUEST";
 const BRIDGE_RESPONSE = "PAIDPOLITELY_EXTENSION_BRIDGE_RESPONSE";
 
+const cardClass = "rounded-[28px] border border-white/12 bg-white/[0.07] shadow-[0_24px_80px_rgba(0,0,0,0.22)] backdrop-blur-[18px]";
+const eyebrowClass = "text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]";
+const primaryButtonClass = "min-h-11 rounded-2xl border-0 bg-linear-to-br from-[#ff4f91] to-[#ffb86b] px-5 font-black text-[#1c0b14] transition disabled:cursor-not-allowed disabled:grayscale disabled:opacity-60";
+const inputClass = "w-full min-w-0 rounded-2xl border border-white/12 bg-black/25 px-4 py-4 text-[#fff8fb] outline-none transition focus:border-[#ff4f91]";
+const mutedClass = "text-[#c9adbd]";
+
 function numberFormat(value: number): string {
   return new Intl.NumberFormat("en-GB").format(value);
 }
@@ -166,23 +172,49 @@ function extensionLabel(state: ExtensionState, version: string | null): string {
   return "Extension error";
 }
 
+function bridgeStateClass(state: ExtensionState): string {
+  if (state === "installed") return "border-[#7affbc]/30 bg-[#7affbc]/7";
+  if (state === "checking" || state === "scanning") return "border-[#ffb86b]/35 bg-[#ffb86b]/8";
+  return "border-[#ff7878]/35 bg-[#ff7878]/8";
+}
+
+function bridgeDotClass(state: ExtensionState): string {
+  if (state === "installed") return "bg-[#7affbc] shadow-[0_0_0_7px_rgba(122,255,188,0.12)]";
+  if (state === "checking" || state === "scanning") return "bg-[#ffb86b] shadow-[0_0_0_7px_rgba(255,184,107,0.12)]";
+  return "bg-[#ff7878] shadow-[0_0_0_7px_rgba(255,120,120,0.12)]";
+}
+
+function stepClass(state: StepState): string {
+  if (state === "done") return "border-[#7affbc]/30 bg-[#7affbc]/7";
+  if (state === "active") return "border-[#ffb86b]/35 bg-[#ffb86b]/8";
+  if (state === "error") return "border-[#ff7878]/35 bg-[#ff7878]/8";
+  return "border-white/12 bg-white/[0.045]";
+}
+
+function stepBadgeClass(state: StepState): string {
+  if (state === "done") return "bg-[#7affbc]/18 text-[#caffdf]";
+  if (state === "active") return "bg-[#ffb86b]/18 text-[#ffe7c9]";
+  if (state === "error") return "bg-[#ff7878]/18 text-[#ffd1d1]";
+  return "bg-white/8 text-[#c9adbd]";
+}
+
 function StatCard({ label, value, detail }: { label: string; value: string; detail?: string }) {
   return (
-    <article className="stat-card">
-      <span>{label}</span>
-      <strong>{value}</strong>
-      {detail ? <small>{detail}</small> : null}
+    <article className={`${cardClass} p-4.5`}>
+      <span className="block text-sm text-[#c9adbd]">{label}</span>
+      <strong className="my-2 block text-[clamp(1.35rem,3vw,2rem)] font-black tracking-[-0.04em]">{value}</strong>
+      {detail ? <small className="text-[#c9adbd]">{detail}</small> : null}
     </article>
   );
 }
 
 function JourneyStep({ number, title, body, state }: { number: number; title: string; body: string; state: StepState }) {
   return (
-    <li className={`journey-step journey-${state}`}>
-      <span>{state === "done" ? "✓" : number}</span>
+    <li className={`grid grid-cols-[42px_minmax(0,1fr)] items-center gap-3 rounded-[20px] border p-3 ${stepClass(state)}`}>
+      <span className={`grid size-9 place-items-center rounded-full font-black ${stepBadgeClass(state)}`}>{state === "done" ? "✓" : number}</span>
       <div>
-        <strong>{title}</strong>
-        <small>{body}</small>
+        <strong className="block">{title}</strong>
+        <small className="mt-1 block leading-snug text-[#c9adbd]">{body}</small>
       </div>
     </li>
   );
@@ -190,10 +222,10 @@ function JourneyStep({ number, title, body, state }: { number: number; title: st
 
 function EmptyState() {
   return (
-    <section className="empty-card">
-      <span className="eyebrow">Waiting for first scan</span>
-      <h2>Run the extension scan to build the dashboard.</h2>
-      <p>
+    <section className={`${cardClass} mb-5 p-6.5`}>
+      <span className={eyebrowClass}>Waiting for first scan</span>
+      <h2 className="my-2 text-xl font-black tracking-[-0.03em]">Run the extension scan to build the dashboard.</h2>
+      <p className={`${mutedClass} max-w-3xl leading-relaxed`}>
         The extension uses the normal Reddit tab in your browser, then imports only the visible public post metadata into this
         page. No passwords, cookies, OAuth tokens, session tokens, or private messages are read.
       </p>
@@ -205,11 +237,11 @@ function WarningCard({ warnings }: { warnings: string[] }) {
   if (warnings.length === 0) return null;
 
   return (
-    <section className="warning-card">
-      <strong>Import notes</strong>
-      <ul>
+    <section className="rounded-3xl border border-[#ffb86b]/40 bg-[#ffb86b]/10 p-4.5">
+      <strong className="mb-2 block text-[#ffb86b]">Import notes</strong>
+      <ul className="grid gap-1.5 pl-5 text-[#ffe7c9]">
         {warnings.map((warning) => (
-          <li key={warning}>{warning}</li>
+          <li className="list-disc" key={warning}>{warning}</li>
         ))}
       </ul>
     </section>
@@ -254,37 +286,38 @@ function ScanSetupCard({
   }
 
   return (
-    <section className="journey-card">
-      <div className="journey-copy">
-        <span className="eyebrow">Recommended flow</span>
-        <h2>Scan a Reddit profile with the browser extension.</h2>
-        <p>
+    <section className={`${cardClass} mb-4.5 grid gap-5.5 p-5.5 lg:grid-cols-[minmax(0,1fr)_minmax(300px,390px)]`}>
+      <div>
+        <span className={eyebrowClass}>Recommended flow</span>
+        <h2 className="my-2.5 text-[clamp(1.8rem,4vw,3rem)] leading-none font-black tracking-[-0.05em]">Scan a Reddit profile with the browser extension.</h2>
+        <p className={`${mutedClass} mb-4.5 max-w-3xl leading-relaxed`}>
           PaidPolitely opens or focuses the Reddit profile, checks it is visible, captures the public post rows, removes Reddit
           promo/game cards, and builds the report here.
         </p>
-        <div className={`bridge-banner bridge-${extensionState}`}>
-          <span className="bridge-dot" />
+        <div className={`grid items-center gap-3 rounded-[22px] border p-3.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${bridgeStateClass(extensionState)}`}>
+          <span className={`size-3.5 rounded-full ${bridgeDotClass(extensionState)}`} />
           <div>
-            <strong>{extensionLabel(extensionState, extensionVersion)}</strong>
-            <small>{extensionMessage}</small>
+            <strong className="block">{extensionLabel(extensionState, extensionVersion)}</strong>
+            <small className="mt-1 block leading-snug text-[#c9adbd]">{extensionMessage}</small>
           </div>
-          <button type="button" onClick={onCheck} disabled={extensionState === "checking" || extensionState === "scanning"}>
+          <button className={`${primaryButtonClass} min-h-10 px-3.5`} type="button" onClick={onCheck} disabled={extensionState === "checking" || extensionState === "scanning"}>
             {extensionState === "checking" ? "Checking..." : "Recheck"}
           </button>
         </div>
       </div>
 
-      <ol className="journey-list">
+      <ol className="grid content-start gap-2.5 p-0">
         <JourneyStep number={1} title="Extension" body="Detect PaidPolitely Capture in this browser." state={extensionStepState} />
         <JourneyStep number={2} title="Username" body="Paste a username, profile URL, or u/name." state={usernameStepState} />
         <JourneyStep number={3} title="Capture" body="Open Reddit, scroll the profile, and import metadata." state={captureStepState} />
         <JourneyStep number={4} title="Review" body="Read the subreddit, timing, and content signals." state={reviewStepState} />
       </ol>
 
-      <form className="scan-form" onSubmit={submit}>
-        <label htmlFor="username">Reddit profile</label>
-        <div className="scan-controls">
+      <form className="rounded-3xl border border-white/12 bg-black/15 p-4 lg:col-span-2" onSubmit={submit}>
+        <label className="mb-2 block text-sm font-extrabold text-[#c9adbd]" htmlFor="username">Reddit profile</label>
+        <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_auto]">
           <input
+            className={inputClass}
             id="username"
             name="username"
             placeholder="u/MrMrsHK or reddit.com/user/MrMrsHK"
@@ -292,18 +325,18 @@ function ScanSetupCard({
             onChange={(event) => setUsername(event.target.value)}
             autoComplete="off"
           />
-          <button className="primary-action" disabled={!canScan} type="submit">
+          <button className={primaryButtonClass} disabled={!canScan} type="submit">
             {extensionState === "scanning" || loading ? "Scanning..." : normalisedUsername ? `Scan u/${normalisedUsername}` : "Scan profile"}
           </button>
         </div>
-        <div className="scan-help-row">
-          <small>{extensionReady ? "Extension ready. Reddit will open in a tab if needed." : "Install or reload the extension, then recheck."}</small>
-          <button className="text-action" type="button" onClick={onTryPublicJson} disabled={!hasValidUsername || loading}>
+        <div className="mt-2.5 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
+          <small className="text-[#c9adbd]">{extensionReady ? "Extension ready. Reddit will open in a tab if needed." : "Install or reload the extension, then recheck."}</small>
+          <button className="border-0 bg-transparent p-0 font-extrabold text-[#ffe6f0] underline decoration-white/25 underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={onTryPublicJson} disabled={!hasValidUsername || loading}>
             Try server-side JSON instead
           </button>
         </div>
         {EXTENSION_STORE_URL ? (
-          <a className="secondary-link" href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">
+          <a className={`${primaryButtonClass} mt-3 inline-flex w-fit items-center justify-center no-underline`} href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">
             Install extension
           </a>
         ) : null}
@@ -332,27 +365,30 @@ function ManualImportCard({
   }
 
   return (
-    <details className="fallback-card">
-      <summary>
-        <span>Manual import / debugging fallback</span>
-        <small>Use this only if the extension bridge fails.</small>
+    <details className={`${cardClass} mb-4.5 overflow-hidden`}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3.5 p-5 marker:hidden after:grid after:size-8.5 after:place-items-center after:rounded-full after:bg-white/8 after:text-xl after:font-black after:text-[#c9adbd] after:content-['+'] open:after:content-['−']">
+        <span>
+          <span className="block font-black">Manual import / debugging fallback</span>
+          <small className="block text-[#c9adbd]">Use this only if the extension bridge fails.</small>
+        </span>
       </summary>
-      <div className="fallback-body">
-        <p>
+      <div className="grid gap-3.5 border-t border-white/12 p-5">
+        <p className={`${mutedClass} leading-relaxed`}>
           Open the Reddit profile, paste the robust capture snippet into DevTools, let it scroll, then paste the copied JSON here.
           The importer will still clean duplicates, game cards, and comment-link rows.
         </p>
-        <div className="import-actions">
-          <button type="button" onClick={copySnippet}>
+        <div className="flex flex-wrap gap-3">
+          <button className={primaryButtonClass} type="button" onClick={copySnippet}>
             {copied ? "Snippet copied" : "Copy robust capture snippet"}
           </button>
         </div>
         <textarea
+          className={`${inputClass} min-h-38 resize-y font-mono text-sm leading-relaxed`}
           value={importPayload}
           onChange={(event) => setImportPayload(event.target.value)}
           placeholder='Paste { "source": "paidpolitely-reddit-extension-capture-v2", ... } or browser-import JSON here'
         />
-        <button type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
+        <button className={`${primaryButtonClass} justify-self-start`} type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
           {loading ? "Importing..." : "Analyse pasted JSON"}
         </button>
       </div>
@@ -361,28 +397,28 @@ function ManualImportCard({
 }
 
 function SubredditTable({ rows }: { rows: SubredditMetric[] }) {
-  if (rows.length === 0) return <p className="muted">No subreddit data found yet.</p>;
+  if (rows.length === 0) return <p className={mutedClass}>No subreddit data found yet.</p>;
 
   return (
-    <div className="table-wrap">
-      <table>
+    <div className="overflow-x-auto">
+      <table className="w-full min-w-155 border-collapse">
         <thead>
           <tr>
-            <th>Subreddit</th>
-            <th>Posts</th>
-            <th>Comments</th>
-            <th>Total score</th>
-            <th>Avg post</th>
+            <th className="border-b border-white/12 px-2.5 py-3 text-left text-xs font-extrabold tracking-widest text-[#c9adbd] uppercase">Subreddit</th>
+            <th className="border-b border-white/12 px-2.5 py-3 text-left text-xs font-extrabold tracking-widest text-[#c9adbd] uppercase">Posts</th>
+            <th className="border-b border-white/12 px-2.5 py-3 text-left text-xs font-extrabold tracking-widest text-[#c9adbd] uppercase">Comments</th>
+            <th className="border-b border-white/12 px-2.5 py-3 text-left text-xs font-extrabold tracking-widest text-[#c9adbd] uppercase">Total score</th>
+            <th className="border-b border-white/12 px-2.5 py-3 text-left text-xs font-extrabold tracking-widest text-[#c9adbd] uppercase">Avg post</th>
           </tr>
         </thead>
         <tbody>
           {rows.map((row) => (
             <tr key={row.subreddit}>
-              <td>r/{row.subreddit}</td>
-              <td>{row.posts}</td>
-              <td>{row.comments}</td>
-              <td>{numberFormat(row.totalScore)}</td>
-              <td>{row.averagePostScore}</td>
+              <td className="border-b border-white/12 px-2.5 py-3">r/{row.subreddit}</td>
+              <td className="border-b border-white/12 px-2.5 py-3">{row.posts}</td>
+              <td className="border-b border-white/12 px-2.5 py-3">{row.comments}</td>
+              <td className="border-b border-white/12 px-2.5 py-3">{numberFormat(row.totalScore)}</td>
+              <td className="border-b border-white/12 px-2.5 py-3">{row.averagePostScore}</td>
             </tr>
           ))}
         </tbody>
@@ -392,15 +428,15 @@ function SubredditTable({ rows }: { rows: SubredditMetric[] }) {
 }
 
 function ContentTypeList({ rows }: { rows: ContentTypeMetric[] }) {
-  if (rows.length === 0) return <p className="muted">No public post formats found yet.</p>;
+  if (rows.length === 0) return <p className={mutedClass}>No public post formats found yet.</p>;
 
   return (
-    <div className="pill-grid">
+    <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fit,minmax(130px,1fr))]">
       {rows.map((row) => (
-        <div className="metric-pill" key={row.type}>
-          <strong>{row.type}</strong>
-          <span>{row.posts} posts</span>
-          <small>{row.averageScore} avg score</small>
+        <div className="rounded-2xl border border-white/12 bg-white/5 p-3.5" key={row.type}>
+          <strong className="mb-2 block text-lg capitalize">{row.type}</strong>
+          <span className="block text-sm text-[#c9adbd]">{row.posts} posts</span>
+          <small className="block text-sm text-[#c9adbd]">{row.averageScore} avg score</small>
         </div>
       ))}
     </div>
@@ -410,41 +446,50 @@ function ContentTypeList({ rows }: { rows: ContentTypeMetric[] }) {
 function Timeline({ rows }: { rows: TimelinePoint[] }) {
   const maxScore = useMemo(() => Math.max(...rows.map((row) => row.score), 1), [rows]);
 
-  if (rows.length === 0) return <p className="muted">No recent activity timeline found.</p>;
+  if (rows.length === 0) return <p className={mutedClass}>No recent activity timeline found.</p>;
 
   return (
-    <div className="timeline" aria-label="Recent activity timeline">
+    <div className="grid gap-2.5" aria-label="Recent activity timeline">
       {rows.map((row) => (
-        <div className="timeline-row" key={row.date}>
-          <span>{row.date.slice(5)}</span>
-          <div className="bar-track">
-            <div className="bar-fill" style={{ width: `${Math.max(6, (row.score / maxScore) * 100)}%` }} />
+        <div className="grid grid-cols-[56px_minmax(0,1fr)_64px] items-center gap-3" key={row.date}>
+          <span className="text-sm text-[#c9adbd]">{row.date.slice(5)}</span>
+          <div className="h-3 overflow-hidden rounded-full bg-white/8">
+            <div className="h-full rounded-full bg-linear-to-r from-[#ff4f91] to-[#ffb86b]" style={{ width: `${Math.max(6, (row.score / maxScore) * 100)}%` }} />
           </div>
-          <strong>{compactNumber(row.score)}</strong>
+          <strong className="text-sm text-[#c9adbd]">{compactNumber(row.score)}</strong>
         </div>
       ))}
     </div>
   );
 }
 
+function PanelHeading({ eyebrow, title }: { eyebrow: string; title: string }) {
+  return (
+    <div className="mb-4">
+      <span className={eyebrowClass}>{eyebrow}</span>
+      <h2 className="mt-2 mb-0 text-xl font-black tracking-[-0.03em]">{title}</h2>
+    </div>
+  );
+}
+
 function Dashboard({ data }: { data: AnalyzeResponse }) {
   return (
-    <section className="dashboard">
+    <section className="grid gap-5.5">
       <WarningCard warnings={data.warnings} />
 
-      <div className="profile-card">
+      <div className={`${cardClass} flex items-center justify-between gap-5 p-6.5 max-sm:flex-col max-sm:items-stretch`}>
         <div>
-          <span className="eyebrow">Latest scan</span>
-          <h2>u/{data.profile.username}</h2>
-          <p>Profile created {formatDate(data.profile.createdUtc)}</p>
+          <span className={eyebrowClass}>Latest scan</span>
+          <h2 className="my-2 text-[clamp(2rem,4vw,3.2rem)] font-black tracking-[-0.05em]">u/{data.profile.username}</h2>
+          <p className={mutedClass}>Profile created {formatDate(data.profile.createdUtc)}</p>
         </div>
-        <div className="karma-total">
-          <span>Total karma</span>
-          <strong>{numberFormat(data.profile.totalKarma)}</strong>
+        <div className="min-w-47 rounded-3xl bg-linear-to-br from-[#ff4f91]/22 to-[#ffb86b]/22 p-4.5 text-right max-sm:text-left">
+          <span className="block text-sm text-[#c9adbd]">Total karma</span>
+          <strong className="mt-1 block text-3xl font-black">{numberFormat(data.profile.totalKarma)}</strong>
         </div>
       </div>
 
-      <div className="stat-grid">
+      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-6">
         <StatCard label="Captured posts" value={numberFormat(data.analytics.summary.posts)} detail="Cleaned public rows" />
         <StatCard label="Captured comments" value={numberFormat(data.analytics.summary.comments)} detail="When available" />
         <StatCard label="Avg post score" value={String(data.analytics.summary.averagePostScore)} />
@@ -457,75 +502,57 @@ function Dashboard({ data }: { data: AnalyzeResponse }) {
         <StatCard label="Captured score" value={compactNumber(data.analytics.summary.totalPostScore)} />
       </div>
 
-      <section className="panel highlight-panel">
-        <div className="panel-heading">
-          <span className="eyebrow">Actionable readout</span>
-          <h2>Next moves</h2>
-        </div>
+      <section className={`${cardClass} bg-linear-to-br from-[#ff4f91]/16 to-[#ffb86b]/10 p-6`}>
+        <PanelHeading eyebrow="Actionable readout" title="Next moves" />
         {data.analytics.recommendations.length === 0 ? (
-          <p className="muted">Not enough public data for recommendations yet.</p>
+          <p className={mutedClass}>Not enough public data for recommendations yet.</p>
         ) : (
-          <ul>
+          <ul className="grid gap-2.5 pl-5 leading-relaxed text-[#ffe6f0]">
             {data.analytics.recommendations.map((recommendation) => (
-              <li key={recommendation}>{recommendation}</li>
+              <li className="list-disc" key={recommendation}>{recommendation}</li>
             ))}
           </ul>
         )}
       </section>
 
-      <section className="panel-grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <span className="eyebrow">Where it works</span>
-            <h2>Subreddit performance</h2>
-          </div>
+      <section className="grid gap-3.5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <article className={`${cardClass} overflow-hidden p-6`}>
+          <PanelHeading eyebrow="Where it works" title="Subreddit performance" />
           <SubredditTable rows={data.analytics.subreddits} />
         </article>
-        <article className="panel">
-          <div className="panel-heading">
-            <span className="eyebrow">Format signal</span>
-            <h2>Content formats</h2>
-          </div>
+        <article className={`${cardClass} overflow-hidden p-6`}>
+          <PanelHeading eyebrow="Format signal" title="Content formats" />
           <ContentTypeList rows={data.analytics.contentTypes} />
         </article>
       </section>
 
-      <section className="panel">
-        <div className="panel-heading">
-          <span className="eyebrow">Momentum</span>
-          <h2>Recent activity score</h2>
-        </div>
+      <section className={`${cardClass} overflow-hidden p-6`}>
+        <PanelHeading eyebrow="Momentum" title="Recent activity score" />
         <Timeline rows={data.analytics.timeline} />
       </section>
 
-      <section className="panel-grid">
-        <article className="panel">
-          <div className="panel-heading">
-            <span className="eyebrow">Repeat patterns</span>
-            <h2>Top posts</h2>
-          </div>
-          <div className="link-list">
+      <section className="grid gap-3.5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
+        <article className={`${cardClass} overflow-hidden p-6`}>
+          <PanelHeading eyebrow="Repeat patterns" title="Top posts" />
+          <div className="grid gap-3">
             {data.analytics.topPosts.map((post) => (
-              <a href={post.permalink} target="_blank" rel="noreferrer" key={post.id}>
-                <strong>{post.title}</strong>
-                <span>r/{post.subreddit} · {numberFormat(post.score)} score · {post.numComments} comments</span>
+              <a className="block rounded-2xl border border-white/12 bg-white/5 p-3.5 no-underline transition hover:border-[#ff4f91]/55" href={post.permalink} target="_blank" rel="noreferrer" key={post.id}>
+                <strong className="mb-1.5 block leading-snug">{post.title}</strong>
+                <span className="block text-sm text-[#c9adbd]">r/{post.subreddit} · {numberFormat(post.score)} score · {post.numComments} comments</span>
               </a>
             ))}
           </div>
         </article>
-        <article className="panel">
-          <div className="panel-heading">
-            <span className="eyebrow">Conversation signal</span>
-            <h2>Top comments</h2>
-          </div>
+        <article className={`${cardClass} overflow-hidden p-6`}>
+          <PanelHeading eyebrow="Conversation signal" title="Top comments" />
           {data.analytics.topComments.length === 0 ? (
-            <p className="muted">No comments were captured in this browser import.</p>
+            <p className={mutedClass}>No comments were captured in this browser import.</p>
           ) : (
-            <div className="link-list">
+            <div className="grid gap-3">
               {data.analytics.topComments.map((comment) => (
-                <a href={comment.permalink} target="_blank" rel="noreferrer" key={comment.id}>
-                  <strong>{comment.linkTitle ?? `Comment in r/${comment.subreddit}`}</strong>
-                  <span>r/{comment.subreddit} · {numberFormat(comment.score)} score</span>
+                <a className="block rounded-2xl border border-white/12 bg-white/5 p-3.5 no-underline transition hover:border-[#ff4f91]/55" href={comment.permalink} target="_blank" rel="noreferrer" key={comment.id}>
+                  <strong className="mb-1.5 block leading-snug">{comment.linkTitle ?? `Comment in r/${comment.subreddit}`}</strong>
+                  <span className="block text-sm text-[#c9adbd]">r/{comment.subreddit} · {numberFormat(comment.score)} score</span>
                 </a>
               ))}
             </div>
@@ -676,45 +703,47 @@ export default function Home() {
   }
 
   return (
-    <main>
-      <section className="hero hero-compact">
-        <div>
-          <div className="eyebrow">PaidPolitely v0.2.3</div>
-          <h1>Reddit profile scan in one browser click.</h1>
-          <p>
-            Extension-first analytics for creator accounts. Open Reddit in the user&apos;s browser, capture public post metadata,
-            clean noisy rows, and turn it into subreddit and content signals.
-          </p>
-        </div>
-        <div className="trust-card">
-          <strong>No Reddit secrets touched.</strong>
-          <span>No password, cookies, OAuth token, session token, DMs, or account settings.</span>
-        </div>
-      </section>
+    <main className="min-h-screen bg-[#120b16] bg-[radial-gradient(circle_at_top_left,rgba(255,79,145,0.28),transparent_36rem),radial-gradient(circle_at_top_right,rgba(255,184,107,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.025),transparent_26rem)] px-4 py-10 text-[#fff8fb] sm:px-6 lg:px-8">
+      <div className="mx-auto w-full max-w-[1180px]">
+        <section className="mb-5.5 grid items-end gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(260px,340px)]">
+          <div>
+            <div className={eyebrowClass}>PaidPolitely v0.2.3</div>
+            <h1 className="mt-0 mb-4.5 max-w-3xl text-[clamp(2.4rem,6vw,5rem)] leading-[0.94] font-black tracking-[-0.07em]">Reddit profile scan in one browser click.</h1>
+            <p className="max-w-3xl text-lg leading-relaxed text-[#c9adbd]">
+              Extension-first analytics for creator accounts. Open Reddit in the user&apos;s browser, capture public post metadata,
+              clean noisy rows, and turn it into subreddit and content signals.
+            </p>
+          </div>
+          <div className={`${cardClass} bg-linear-to-br from-[#7affbc]/11 to-white/[0.055] p-4.5`}>
+            <strong className="mb-2 block text-[#d9ffe9]">No Reddit secrets touched.</strong>
+            <span className="block leading-snug text-[#c9adbd]">No password, cookies, OAuth token, session token, DMs, or account settings.</span>
+          </div>
+        </section>
 
-      {state === "error" ? <div className="error-card">{error}</div> : null}
+        {state === "error" ? <div className={`${cardClass} mb-4.5 border-[#ff7878]/50 p-6.5 text-[#ff7878]`}>{error}</div> : null}
 
-      <ScanSetupCard
-        username={username}
-        setUsername={setUsername}
-        extensionState={extensionState}
-        extensionMessage={extensionMessage}
-        extensionVersion={extensionVersion}
-        hasData={Boolean(data)}
-        loading={state === "loading"}
-        onCheck={checkExtension}
-        onScan={scanWithExtension}
-        onTryPublicJson={analysePublicJson}
-      />
+        <ScanSetupCard
+          username={username}
+          setUsername={setUsername}
+          extensionState={extensionState}
+          extensionMessage={extensionMessage}
+          extensionVersion={extensionVersion}
+          hasData={Boolean(data)}
+          loading={state === "loading"}
+          onCheck={checkExtension}
+          onScan={scanWithExtension}
+          onTryPublicJson={analysePublicJson}
+        />
 
-      <ManualImportCard
-        importPayload={importPayload}
-        setImportPayload={setImportPayload}
-        onImport={analyseImport}
-        loading={state === "loading"}
-      />
+        <ManualImportCard
+          importPayload={importPayload}
+          setImportPayload={setImportPayload}
+          onImport={analyseImport}
+          loading={state === "loading"}
+        />
 
-      {!data ? <EmptyState /> : <Dashboard data={data} />}
+        {!data ? <EmptyState /> : <Dashboard data={data} />}
+      </div>
     </main>
   );
 }
