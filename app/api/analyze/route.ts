@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { buildAccountAnalytics } from "@/lib/analytics";
+import { requireCurrentUser } from "@/lib/auth/session";
 import { saveAccountScan } from "@/lib/db/scans";
 import { enqueuePlannerJobForScan } from "@/lib/planner/queue";
 import { fetchRedditAccountData, RedditFetchError } from "@/lib/reddit";
@@ -12,6 +13,9 @@ type ErrorResponse = {
 };
 
 export async function GET(request: NextRequest): Promise<NextResponse> {
+  const user = await requireCurrentUser().catch(() => null);
+  if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
+
   const username = request.nextUrl.searchParams.get("username");
 
   if (!username) {
@@ -21,8 +25,8 @@ export async function GET(request: NextRequest): Promise<NextResponse> {
   try {
     const accountData = await fetchRedditAccountData(username);
     const analytics = buildAccountAnalytics(accountData);
-    const savedScan = await saveAccountScan(accountData, analytics);
-    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId);
+    const savedScan = await saveAccountScan(accountData, analytics, user.id);
+    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId, user.id);
 
     return NextResponse.json({
       profile: accountData.profile,
