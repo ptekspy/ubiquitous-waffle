@@ -34,8 +34,8 @@ Those are intentionally left for later iterations.
 ## Run locally
 
 ```bash
-npm install
-npm run dev
+pnpm install
+pnpm dev
 ```
 
 Open `http://localhost:3000`.
