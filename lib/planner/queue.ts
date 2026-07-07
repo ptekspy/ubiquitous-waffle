@@ -169,9 +169,12 @@ function stringifyList(values: string[]): string {
   return values.length === 0 ? "None" : values.join("\n");
 }
 
-async function buildPlannerPrompt(scanId: string): Promise<string> {
-  const scan = await prisma.accountScan.findUnique({
-    where: { id: scanId },
+async function buildPlannerPrompt(scanId: string, ownerId?: string): Promise<string> {
+  const scan = await prisma.accountScan.findFirst({
+    where: {
+      id: scanId,
+      ...(ownerId ? { account: { ownerUserId: ownerId } } : {}),
+    },
     include: {
       account: true,
       postSnapshots: {
@@ -223,10 +226,11 @@ async function buildPlannerPrompt(scanId: string): Promise<string> {
   ].join("\n\n");
 }
 
-export async function enqueuePlannerJobForScan(scanId: string): Promise<PlannerJobSummary> {
+export async function enqueuePlannerJobForScan(scanId: string, ownerId?: string): Promise<PlannerJobSummary> {
   const existing = await prisma.plannerJob.findFirst({
     where: {
       scanId,
+      ...(ownerId ? { account: { ownerUserId: ownerId } } : {}),
       status: {
         in: ["QUEUED", "RUNNING", "COMPLETED"],
       },
@@ -236,8 +240,11 @@ export async function enqueuePlannerJobForScan(scanId: string): Promise<PlannerJ
 
   if (existing) return toPlannerJobSummary(existing);
 
-  const scan = await prisma.accountScan.findUnique({
-    where: { id: scanId },
+  const scan = await prisma.accountScan.findFirst({
+    where: {
+      id: scanId,
+      ...(ownerId ? { account: { ownerUserId: ownerId } } : {}),
+    },
     select: { accountId: true },
   });
 
@@ -245,7 +252,7 @@ export async function enqueuePlannerJobForScan(scanId: string): Promise<PlannerJ
     throw new Error("Cannot enqueue planner job because the scan does not exist.");
   }
 
-  const prompt = await buildPlannerPrompt(scanId);
+  const prompt = await buildPlannerPrompt(scanId, ownerId);
   const job = await prisma.plannerJob.create({
     data: {
       accountId: scan.accountId,
@@ -362,7 +369,12 @@ export async function processNextPlannerJob(): Promise<ProcessPlannerJobResult> 
   }
 }
 
-export async function getPlannerJob(jobId: string): Promise<PlannerJobSummary | null> {
-  const job = await prisma.plannerJob.findUnique({ where: { id: jobId } });
+export async function getPlannerJob(jobId: string, ownerId?: string): Promise<PlannerJobSummary | null> {
+  const job = await prisma.plannerJob.findFirst({
+    where: {
+      id: jobId,
+      ...(ownerId ? { account: { ownerUserId: ownerId } } : {}),
+    },
+  });
   return job ? toPlannerJobSummary(job) : null;
 }
