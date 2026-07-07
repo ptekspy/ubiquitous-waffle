@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { buildAccountAnalytics } from "@/lib/analytics";
 import { BrowserImportError, parseBrowserImport } from "@/lib/browser-import";
 import { saveAccountScan } from "@/lib/db/scans";
+import { enqueuePlannerJobForScan } from "@/lib/planner/queue";
 
 export const dynamic = "force-dynamic";
 
@@ -31,12 +32,14 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     const accountData = parseBrowserImport(body.raw);
     const analytics = buildAccountAnalytics(accountData);
     const savedScan = await saveAccountScan(accountData, analytics);
+    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId);
 
     return NextResponse.json({
       profile: accountData.profile,
       analytics,
       warnings: accountData.warnings,
       scanId: savedScan.scanId,
+      plannerJob,
     });
   } catch (error) {
     if (error instanceof BrowserImportError) {
