@@ -5,6 +5,7 @@ import type { JsonObject, PlannerJobStatus, PlannerJobSummary } from "@/lib/type
 
 const DEFAULT_OLLAMA_BASE_URL = "https://ollama.tik-track.com";
 const PLANNER_MODEL_KEYWORDS = [
+  "qwen3.6",
   "qwen3",
   "qwen2.5",
   "qwen",
@@ -16,15 +17,34 @@ const PLANNER_MODEL_KEYWORDS = [
   "llama3.1",
   "mistral-nemo",
   "mistral",
+  "gemma4",
   "gemma3",
   "gemma2",
 ];
-const PLANNER_MODEL_PENALTIES = ["embed", "embedding", "vision", "clip", "code", "coder"];
+const PLANNER_MODEL_PENALTIES = ["embed", "embedding", "clip", "code", "coder"];
+const PLANNER_MODEL_BOOSTS = [
+  { keyword: "hauhaucs", score: 100_000 },
+  { keyword: "uncensored", score: 90_000 },
+  { keyword: "abliterated", score: 70_000 },
+  { keyword: "aggressive", score: 50_000 },
+  { keyword: "qwen3.6-27b", score: 25_000 },
+  { keyword: "qwen3.6:27b", score: 20_000 },
+  { keyword: "tools", score: 2_000 },
+  { keyword: "thinking", score: 1_500 },
+];
+
+type OllamaModelDetails = {
+  parameter_size?: string;
+  context_length?: number;
+};
 
 type OllamaModel = {
   name?: string;
+  model?: string;
   size?: number;
   modified_at?: string;
+  details?: OllamaModelDetails;
+  capabilities?: string[];
 };
 
 type OllamaTagsResponse = {
@@ -88,20 +108,33 @@ function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-function modelKeywordScore(modelName: string): number {
-  const lowerName = modelName.toLowerCase();
+function parameterSizeScore(value: string | undefined): number {
+  const match = value?.toLowerCase().match(/([0-9]+(?:\.[0-9]+)?)b/);
+  return match ? Number.parseFloat(match[1] ?? "0") * 100 : 0;
+}
+
+function modelKeywordScore(model: OllamaModel): number {
+  const name = model.name ?? model.model ?? "";
+  const lowerName = name.toLowerCase();
+  const lowerCapabilities = (model.capabilities ?? []).join(" ").toLowerCase();
   const keywordIndex = PLANNER_MODEL_KEYWORDS.findIndex((keyword) => lowerName.includes(keyword));
   const keywordScore = keywordIndex === -1 ? 0 : (PLANNER_MODEL_KEYWORDS.length - keywordIndex) * 1_000;
   const penalty = PLANNER_MODEL_PENALTIES.some((keyword) => lowerName.includes(keyword)) ? 25_000 : 0;
+  const boostScore = PLANNER_MODEL_BOOSTS.reduce((sum, boost) => {
+    const haystack = `${lowerName} ${lowerCapabilities}`;
+    return haystack.includes(boost.keyword) ? sum + boost.score : sum;
+  }, 0);
   const sizeMatch = lowerName.match(/(?:^|[^0-9])([0-9]+(?:\.[0-9]+)?)b(?:[^a-z]|$)/);
-  const sizeScore = sizeMatch ? Number.parseFloat(sizeMatch[1] ?? "0") * 100 : 0;
+  const nameSizeScore = sizeMatch ? Number.parseFloat(sizeMatch[1] ?? "0") * 100 : 0;
+  const detailSizeScore = parameterSizeScore(model.details?.parameter_size);
+  const contextScore = Math.min((model.details?.context_length ?? 0) / 10_000, 50);
 
-  return keywordScore + sizeScore - penalty;
+  return keywordScore + boostScore + Math.max(nameSizeScore, detailSizeScore) + contextScore - penalty;
 }
 
 function choosePlannerModel(models: OllamaModel[]): string | null {
   const candidates = models
-    .map((model) => ({ name: model.name?.trim() ?? "", score: modelKeywordScore(model.name ?? ""), size: model.size ?? 0 }))
+    .map((model) => ({ name: model.name?.trim() ?? model.model?.trim() ?? "", score: modelKeywordScore(model), size: model.size ?? 0 }))
     .filter((model) => model.name.length > 0)
     .sort((a, b) => b.score - a.score || b.size - a.size || a.name.localeCompare(b.name));
 
