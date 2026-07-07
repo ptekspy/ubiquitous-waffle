@@ -55,12 +55,12 @@ model AccountScan {
   analytics           Json
   createdAt           DateTime @default(now())
 
-  account            Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  postSnapshots      PostSnapshot[]
-  commentSnapshots   CommentSnapshot[]
-  subredditSnapshots SubredditSnapshot[]
-  mediaGroups        MediaGroup[]
-  plannerJobs        PlannerJob[]
+  account              Account             @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  postSnapshots        PostSnapshot[]
+  commentSnapshots     CommentSnapshot[]
+  subredditSnapshots   SubredditSnapshot[]
+  mediaGroups          MediaGroup[]
+  plannerJobs          PlannerJob[]
 
   @@index([accountId, fetchedAt])
   @@index([source])
@@ -132,4 +132,47 @@ model SubredditSnapshot {
 
   @@unique([scanId, subreddit])
   @@index([accountId, subreddit])
+}
+
+model MediaGroup {
+  id            String   @id @default(cuid())
+  scanId        String
+  accountId     String
+  mediaKey      String
+  postCount     Int      @default(0)
+  totalScore    Int      @default(0)
+  averageScore  Float    @default(0)
+  bestSubreddit String?
+  bestTitle     String?
+  bestPostScore Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  scan AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@unique([scanId, mediaKey])
+  @@index([accountId, totalScore])
+}
+
+model PlannerJob {
+  id          String           @id @default(cuid())
+  accountId   String
+  scanId      String
+  status      PlannerJobStatus @default(QUEUED)
+  model       String?
+  prompt      String
+  result      Json?
+  error       String?
+  attempts    Int              @default(0)
+  lockedAt    DateTime?
+  startedAt   DateTime?
+  completedAt DateTime?
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  account Account     @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scan    AccountScan @relation(fields: [scanId], references: [id], onDelete: Cascade)
+
+  @@index([status, createdAt])
+  @@index([accountId, createdAt])
+  @@index([scanId])
 }
