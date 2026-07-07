@@ -6,7 +6,8 @@ import type { AnalyzeResponse, ContentTypeMetric, SubredditMetric, TimelinePoint
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
 
-const BROWSER_CAPTURE_SNIPPET = `(() => {
+const BROWSER_CAPTURE_SNIPPET = `(async () => {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const text = (node) => node?.textContent?.trim() ?? "";
   const numberFrom = (value) => {
     const raw = String(value ?? "").trim().toLowerCase().replace(/,/g, "");
@@ -16,18 +17,79 @@ const BROWSER_CAPTURE_SNIPPET = `(() => {
     const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : 1;
     return Math.round(parseFloat(token) * multiplier);
   };
+  const absolute = (href) => {
+    if (!href) return "";
+    if (href.startsWith("https://")) return href;
+    if (href.startsWith("/")) return "https://www.reddit.com" + href;
+    return "https://www.reddit.com/" + href;
+  };
+  const redditIdFromHref = (href) => href?.match(/\\/comments\\/([^/]+)\\//i)?.[1] ?? "";
+  const subredditFromHref = (href) => href?.match(/\\/r\\/([^/]+)\\//i)?.[1] ?? "";
   const username = location.pathname.match(/\\/user\\/([^/]+)/i)?.[1] || location.pathname.match(/\\/u\\/([^/]+)/i)?.[1] || document.querySelector('[data-testid="profile-name"]')?.textContent?.replace(/^u\\//i, "") || "";
-  const postNodes = Array.from(document.querySelectorAll('shreddit-post, article, [data-testid="post-container"]')).slice(0, 100);
-  const posts = postNodes.map((node, index) => {
-    const title = text(node.querySelector('[slot="title"], h1, h2, h3, a[slot="title"]')) || text(node.querySelector('a[href*="/comments/"]'));
-    const href = node.getAttribute?.('permalink') || node.querySelector('a[href*="/comments/"]')?.getAttribute('href') || "";
-    const subreddit = node.getAttribute?.('subreddit-prefixed-name')?.replace(/^r\\//i, "") || text(node.querySelector('a[href^="/r/"], a[href*="reddit.com/r/"]')).replace(/^r\\//i, "");
-    const score = numberFrom(node.getAttribute?.('score') || text(node.querySelector('[aria-label*="upvote"], [id*="score"], faceplate-number')));
-    const numComments = numberFrom(node.getAttribute?.('comment-count') || text(node.querySelector('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
-    return { id: node.getAttribute?.('id') || \`browser-post-\${index}\`, title, subreddit, permalink: href, score, numComments, createdUtc: Math.floor(Date.now() / 1000) };
-  }).filter((post) => post.title && post.subreddit);
-  const payload = { source: "paidpolitely-reddit-browser-import-v1", capturedAt: new Date().toISOString(), username, profile: { username }, posts, comments: [] };
-  copy(JSON.stringify(payload, null, 2));
+  const postsByKey = new Map();
+  const visiblePostNodes = () => {
+    const shredditPosts = Array.from(document.querySelectorAll("shreddit-post"));
+    if (shredditPosts.length) return shredditPosts;
+    return Array.from(document.querySelectorAll('article, [data-testid="post-container"]'));
+  };
+  const captureVisiblePosts = () => {
+    for (const [index, node] of visiblePostNodes().entries()) {
+      const href = node.getAttribute?.("permalink") || node.querySelector('a[href*="/comments/"]')?.getAttribute("href") || "";
+      const idFromHref = redditIdFromHref(href);
+      const id = node.getAttribute?.("id") || (idFromHref ? "t3_" + idFromHref : "browser-post-" + index);
+      const title = text(node.querySelector('[slot="title"], a[slot="title"], h1, h2, h3')) || text(node.querySelector('a[href*="/comments/"]'));
+      const subredditAttribute = node.getAttribute?.("subreddit-prefixed-name") || node.getAttribute?.("subreddit") || "";
+      const subreddit = subredditFromHref(href) || subredditAttribute.replace(/^r\\//i, "");
+      const score = numberFrom(node.getAttribute?.("score") || text(node.querySelector('[aria-label*="upvote"], [id*="score"], faceplate-number')));
+      const numComments = numberFrom(node.getAttribute?.("comment-count") || text(node.querySelector('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
+      const createdRaw = node.getAttribute?.("created-timestamp") || node.getAttribute?.("created") || node.querySelector("time")?.getAttribute("datetime") || "";
+      const createdParsed = Date.parse(createdRaw);
+      const createdUtc = Number.isFinite(createdParsed) ? Math.floor(createdParsed / 1000) : Math.floor(Date.now() / 1000);
+      if (!title || !subreddit || !href) continue;
+      const key = idFromHref || id || href;
+      const post = { id, title, subreddit, permalink: href, score, numComments, createdUtc };
+      const existing = postsByKey.get(key);
+      if (!existing || post.score + post.numComments > existing.score + existing.numComments) {
+        postsByKey.set(key, post);
+      }
+    }
+  };
+  const startingScrollY = window.scrollY;
+  let lastHeight = 0;
+  let lastCount = 0;
+  let unchangedPasses = 0;
+  window.scrollTo(0, 0);
+  await sleep(600);
+  captureVisiblePosts();
+  for (let pass = 0; pass < 90 && unchangedPasses < 5; pass += 1) {
+    window.scrollBy(0, Math.max(700, window.innerHeight * 0.85));
+    await sleep(650);
+    captureVisiblePosts();
+    const height = document.scrollingElement?.scrollHeight || document.body.scrollHeight;
+    const count = postsByKey.size;
+    if (height === lastHeight && count === lastCount) unchangedPasses += 1;
+    else unchangedPasses = 0;
+    lastHeight = height;
+    lastCount = count;
+  }
+  window.scrollTo(0, 0);
+  await sleep(500);
+  captureVisiblePosts();
+  window.scrollTo(0, startingScrollY);
+  const payload = {
+    source: "paidpolitely-reddit-browser-import-v2",
+    capturedAt: new Date().toISOString(),
+    username,
+    profile: { username },
+    posts: Array.from(postsByKey.values()),
+    comments: []
+  };
+  const json = JSON.stringify(payload, null, 2);
+  try {
+    await navigator.clipboard.writeText(json);
+  } catch {
+    copy(json);
+  }
   console.log("PaidPolitely capture copied", payload);
 })();`;
 
@@ -123,19 +185,19 @@ function BrowserImportCard({
         <span className="eyebrow">Fallback when Reddit returns 403</span>
         <h2>Browser capture import</h2>
         <p>
-          Open the Reddit profile in your browser, paste the capture snippet into DevTools console, then paste the copied
-          JSON here.
+          Open the Reddit profile in your browser, paste the capture snippet into DevTools console, let it auto-scroll the
+          profile, then paste the copied JSON here.
         </p>
       </div>
       <div className="import-actions">
         <button type="button" onClick={copySnippet}>
-          {copied ? "Copied" : "Copy capture snippet"}
+          {copied ? "Copied" : "Copy auto-scroll capture snippet"}
         </button>
       </div>
       <textarea
         value={importPayload}
         onChange={(event) => setImportPayload(event.target.value)}
-        placeholder='Paste the copied { "source": "paidpolitely-reddit-browser-import-v1", ... } JSON here'
+        placeholder='Paste the copied { "source": "paidpolitely-reddit-browser-import-v2", ... } JSON here'
       />
       <button type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
         {loading ? "Importing..." : "Analyse browser import"}
@@ -270,7 +332,7 @@ export default function Home() {
   return (
     <main>
       <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.1.2</div>
+        <div className="eyebrow">PaidPolitely v0.1.3</div>
         <h1>Reddit account analytics without OAuth.</h1>
         <p>
           Enter a Reddit username for a server-side attempt, or use browser capture when Reddit blocks public JSON.
