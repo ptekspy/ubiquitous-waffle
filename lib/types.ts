@@ -1,3 +1,5 @@
+export type JsonObject = Record<string, unknown>;
+
 export type RedditProfile = {
   id: string;
   username: string;
@@ -43,6 +45,11 @@ export type RedditAccountData = {
   posts: RedditPost[];
   comments: RedditComment[];
   warnings: string[];
+  source: string;
+  capturedAt: string | null;
+  metadata: JsonObject | null;
+  rawPostCount: number;
+  rawCommentCount: number;
 };
 
 export type SubredditMetric = {
@@ -88,8 +95,22 @@ export type AccountAnalytics = {
   recommendations: string[];
 };
 
+export type PlannerJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export type PlannerJobSummary = {
+  id: string;
+  status: PlannerJobStatus;
+  model: string | null;
+  result: JsonObject | null;
+  error: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type AnalyzeResponse = {
   profile: RedditProfile;
   analytics: AccountAnalytics;
   warnings: string[];
+  scanId?: string;
+  plannerJob?: PlannerJobSummary | null;
 };
