@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect } from "react";
+import { useEffect, useRef } from "react";
 
 import { claimBrowserCrawlerJob, importBrowserCrawlerPayload } from "@/lib/api/client";
 import { sendExtensionMessage } from "@/lib/extension/client";
@@ -24,6 +24,14 @@ function sleep(ms: number): Promise<void> {
 }
 
 export function BrowserPostCrawler({ scanId, extensionState, onRefresh, onStatus }: BrowserPostCrawlerProps) {
+  const refreshRef = useRef(onRefresh);
+  const statusRef = useRef(onStatus);
+
+  useEffect(() => {
+    refreshRef.current = onRefresh;
+    statusRef.current = onStatus;
+  }, [onRefresh, onStatus]);
+
   useEffect(() => {
     if (extensionState !== "installed" || !scanId) return;
 
@@ -36,7 +44,7 @@ export function BrowserPostCrawler({ scanId, extensionState, onRefresh, onStatus
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok || !claim.job) break;
 
-        onStatus(`Deep crawling r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}`);
+        statusRef.current(`Deep crawling r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}`);
 
         const response = await sendExtensionMessage<ExtensionCrawlerResponse>({
           type: "PAIDPOLITELY_DEEP_DIVE_REDDIT_POST",
@@ -44,13 +52,13 @@ export function BrowserPostCrawler({ scanId, extensionState, onRefresh, onStatus
         } as never);
 
         if (!response.ok) {
-          onStatus(response.error);
+          statusRef.current(response.error);
           break;
         }
 
         const imported = await importBrowserCrawlerPayload(claim.job.id, response.payload);
         if (!imported.ok) {
-          onStatus(imported.error);
+          statusRef.current(imported.error);
           break;
         }
 
@@ -59,8 +67,8 @@ export function BrowserPostCrawler({ scanId, extensionState, onRefresh, onStatus
       }
 
       if (!cancelled && completed > 0) {
-        onStatus(`Deep crawled ${completed} post${completed === 1 ? "" : "s"}. Refreshing dashboard data.`);
-        await onRefresh();
+        statusRef.current(`Deep crawled ${completed} post${completed === 1 ? "" : "s"}. Refreshing dashboard data.`);
+        await refreshRef.current();
       }
     }
 
@@ -69,7 +77,7 @@ export function BrowserPostCrawler({ scanId, extensionState, onRefresh, onStatus
     return () => {
       cancelled = true;
     };
-  }, [extensionState, scanId, onRefresh, onStatus]);
+  }, [extensionState, scanId]);
 
   return null;
 }
