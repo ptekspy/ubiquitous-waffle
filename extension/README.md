@@ -1,6 +1,6 @@
 # PaidPolitely Capture extension
 
-Local unpacked Chrome extension for the v0.2.0 browser bridge.
+Local unpacked Chrome/Edge extension for the v0.2.1 browser bridge.
 
 It lets the PaidPolitely website ask the installed extension to:
 
@@ -19,28 +19,18 @@ It does **not** request the `cookies` permission and does **not** read Reddit pa
 3. Enable **Developer mode**.
 4. Click **Load unpacked**.
 5. Select this repo's `extension` folder.
-6. Copy the extension ID shown on the card.
-7. Add it to the web app env:
+6. Click the extension icon. You should now see a small **PaidPolitely Capture** popup.
+7. Open or reload `http://localhost:3000` and click **Check extension**.
 
-```bash
-NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID="paste-extension-id-here"
-```
-
-8. Restart the web app:
-
-```bash
-pnpm dev
-```
-
-9. Open `http://localhost:3000` and click **Check extension**.
+In v0.2.1 the website first detects the extension through a content script injected into the PaidPolitely page, so `NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID` can stay blank for local testing.
 
 ## Expected local test sequence
 
-Before setting `NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID`, the website should show that the extension bridge is not configured.
+Before installing the extension, the website should show **Not detected**.
 
-After setting a fake or old extension ID, the website should show that the extension is not detected.
+After installing or reloading the unpacked extension, reload the website tab. The extension panel should show **Installed** and mention the `content-script` bridge.
 
-After loading this unpacked extension, copying its real ID into `.env.local`, and restarting `pnpm dev`, the website should show the extension as installed.
+If you change any file under `extension/`, go back to `chrome://extensions`, click **Reload** on the PaidPolitely Capture card, then reload `http://localhost:3000`.
 
 ## Scan flow
 
@@ -51,6 +41,20 @@ After loading this unpacked extension, copying its real ID into `.env.local`, an
 5. The extension scrolls/captures the profile and returns the payload to the website.
 6. The website imports it automatically and renders the analytics dashboard.
 
+## Troubleshooting
+
+### Clicking the extension icon does nothing
+
+You are probably running an older unpacked copy. Pull latest, then click **Reload** on the extension card in `chrome://extensions`. v0.2.1 includes a popup.
+
+### Website cannot detect the extension
+
+1. Make sure the extension card says v0.2.1.
+2. Click **Reload** on the extension card in `chrome://extensions`.
+3. Fully reload `http://localhost:3000` after reloading the extension.
+4. Make sure the app is running on `http://localhost:3000` or `http://127.0.0.1:3000`.
+5. Open DevTools on the PaidPolitely page and check for extension/content-script errors.
+
 ## Production notes
 
 For production, publish the extension to the Chrome Web Store and set:
@@ -60,4 +64,4 @@ NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID="chrome-web-store-extension-id"
 NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE_URL="https://chromewebstore.google.com/detail/..."
 ```
 
-The `externally_connectable.matches` list in `manifest.json` must include every web origin that is allowed to talk to the extension.
+The `externally_connectable.matches` and `content_scripts.matches` lists in `manifest.json` must include every web origin that is allowed to talk to the extension.
