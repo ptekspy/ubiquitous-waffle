@@ -1,29 +1,26 @@
 # PaidPolitely Reddit Analytics
 
-v0.2.1 of the PaidPolitely Reddit account analytics SaaS.
+v0.2.4 of the PaidPolitely Reddit account analytics SaaS.
 
-This version deliberately avoids Reddit OAuth. It first tries public Reddit JSON for profiles, submissions, and comments. If Reddit blocks server-side JSON with a 403, the UI now has two browser-session options:
-
-1. A Chrome/Edge extension bridge that can open or focus the Reddit profile tab, signpost the user if Reddit needs login/age confirmation, capture visible post metadata, and import it automatically.
-2. A manual browser capture fallback using the DevTools snippet.
+This version deliberately avoids Reddit OAuth. It first tries public server-side Reddit JSON. If Reddit blocks that, the browser extension now tries a no-tab browser-session JSON scan before falling back to the quiet background-tab scanner.
 
 The extension does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
-## What v0.2.1 does
+## What v0.2.4 does
 
 - Accepts a Reddit username, profile URL, or `u/username` value.
-- Tries public profile data from `about.json`.
+- Tries public server-side profile data from `about.json`.
 - Tries latest public submitted posts and comments.
-- Retries public JSON requests through `www.reddit.com` and `api.reddit.com`.
-- Uses API-style headers first, then browser-style headers as a fallback.
 - Detects whether the PaidPolitely Capture extension is installed via a content-script bridge on the PaidPolitely page.
 - Falls back to direct `chrome.runtime.sendMessage(extensionId, ...)` if an extension ID is configured.
 - Adds an extension popup so clicking the extension icon confirms it is installed.
-- Lets the extension open or focus `https://www.reddit.com/user/<username>/submitted/`.
-- Signposts the user if Reddit needs login or mature-content confirmation.
-- Auto-scrolls the Reddit profile during browser capture so virtualised posts are mounted into the DOM.
-- Dedupes browser-captured rows by Reddit post id/permalink.
-- Cleans duplicate, comment-link, or incomplete browser rows from imported post analytics.
+- Extension scan strategy:
+  - first tries Reddit `about.json`, `submitted.json`, and `comments.json` from the extension service worker with browser credentials included
+  - if Reddit blocks or empties those JSON responses, falls back to a quiet background tab
+  - only brings Reddit forward when login, age confirmation, or troubleshooting is needed
+- Auto-scrolls the Reddit profile during tab fallback so virtualised posts are mounted into the DOM.
+- Dedupes captured rows by Reddit post id/permalink.
+- Cleans duplicate, game/promo, comment-link, or incomplete browser rows from imported post analytics.
 - Shows partial import warnings if data cannot be imported.
 - Calculates a lightweight analytics report:
   - total recent posts/comments
@@ -69,7 +66,7 @@ NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_STORE_URL=""
 
 Set `REDDIT_DEBUG=1` locally to print failed Reddit fetch attempts to the dev server console.
 
-`NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID` can stay blank for local v0.2.1 testing because the website now detects the extension through the injected content-script bridge. Set it only if you want to test the direct extension-ID fallback.
+`NEXT_PUBLIC_PAIDPOLITELY_EXTENSION_ID` can stay blank for local v0.2.4 testing because the website detects the extension through the injected content-script bridge. Set it only if you want to test the direct extension-ID fallback.
 
 ## API
 
@@ -129,9 +126,9 @@ The extension panel should show **Installed** and mention the `content-script` b
 
 1. Enter a Reddit username, for example `MrMrsHK`.
 2. Click **Scan u/MrMrsHK**.
-3. The extension will focus an existing matching Reddit profile tab or open `https://www.reddit.com/user/MrMrsHK/submitted/`.
-4. If Reddit asks you to sign in or confirm mature content, follow the signpost in the Reddit tab, then click **Continue scan**.
-5. The extension scrolls/captures the profile and sends the payload back to the website.
+3. The extension first tries a no-tab Reddit JSON scan from its service worker.
+4. If Reddit blocks that, the extension reuses an existing matching Reddit profile tab or opens `https://www.reddit.com/user/MrMrsHK/submitted/` quietly in the background.
+5. If Reddit asks you to sign in or confirm mature content, follow the signpost in the Reddit tab, then click **Continue scan**.
 6. The website imports the payload automatically and renders the analytics dashboard.
 
 ### Troubleshooting detection
