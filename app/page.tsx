@@ -105,13 +105,13 @@ function BrowserImportCard({
       </div>
       <div className="import-actions">
         <button type="button" onClick={copySnippet}>
-          {copied ? "Copied" : "Copy auto-scroll capture snippet"}
+          {copied ? "Copied" : "Copy robust capture snippet"}
         </button>
       </div>
       <textarea
         value={importPayload}
         onChange={(event) => setImportPayload(event.target.value)}
-        placeholder='Paste the copied { "source": "paidpolitely-reddit-browser-import-v3", ... } JSON here'
+        placeholder='Paste the copied { "source": "paidpolitely-reddit-browser-import-v4", ... } JSON here'
       />
       <button type="button" onClick={onImport} disabled={loading || importPayload.trim().length === 0}>
         {loading ? "Importing..." : "Analyse browser import"}
@@ -246,7 +246,7 @@ export default function Home() {
   return (
     <main>
       <section className="hero">
-        <div className="eyebrow">PaidPolitely v0.1.4</div>
+        <div className="eyebrow">PaidPolitely v0.1.5</div>
         <h1>Reddit account analytics without OAuth.</h1>
         <p>
           Enter a Reddit username for a server-side attempt, or use browser capture when Reddit blocks public JSON.
