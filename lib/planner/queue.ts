@@ -85,6 +85,64 @@ async function resolvePlannerModel(): Promise<string> {
   return firstModel;
 }
 
+function stringifyList(values: string[]): string {
+  return values.length === 0 ? "None" : values.join("\n");
+}
+
+async function buildPlannerPrompt(scanId: string): Promise<string> {
+  const scan = await prisma.accountScan.findUnique({
+    where: { id: scanId },
+    include: {
+      account: true,
+      postSnapshots: {
+        orderBy: [{ score: "desc" }, { numComments: "desc" }],
+        take: 20,
+      },
+      subredditSnapshots: {
+        orderBy: [{ totalScore: "desc" }],
+        take: 20,
+      },
+      mediaGroups: {
+        orderBy: [{ totalScore: "desc" }],
+        take: 12,
+      },
+    },
+  });
+
+  if (!scan) {
+    throw new Error("Planner scan not found.");
+  }
+
+  const subredditLines = scan.subredditSnapshots.map(
+    (row) => `- r/${row.subreddit}: ${row.posts} posts, ${row.comments} comments, ${row.totalScore} total score, ${row.averagePostScore} avg post score`,
+  );
+  const postLines = scan.postSnapshots.map(
+    (post) => `- ${post.score} score / ${post.numComments} comments / r/${post.subreddit} / ${post.contentType}: ${post.title}`,
+  );
+  const mediaLines = scan.mediaGroups.map(
+    (group) => `- ${group.totalScore} total score across ${group.postCount} posts; best r/${group.bestSubreddit ?? "unknown"}; title: ${group.bestTitle ?? "unknown"}`,
+  );
+
+  return [
+    "You are the PaidPolitely next item planner for a Reddit creator account.",
+    "Use the scan data to suggest the next safe, platform-compliant Reddit post tests.",
+    "Return valid JSON only with: summary, nextPost, experiments, avoid, confidence.",
+    `Account: u/${scan.account.username}`,
+    `Scan source: ${scan.source}`,
+    `Captured posts: ${scan.cleanedPostCount}`,
+    `Captured comments: ${scan.cleanedCommentCount}`,
+    `Total post score: ${scan.totalPostScore}`,
+    `Best subreddit: ${scan.bestSubreddit ?? "unknown"}`,
+    `Best UTC hour: ${scan.bestPostingHourUtc === null ? "unknown" : `${scan.bestPostingHourUtc}:00`}`,
+    "Subreddit performance:",
+    stringifyList(subredditLines),
+    "Top posts:",
+    stringifyList(postLines),
+    "Repeated media groups:",
+    stringifyList(mediaLines),
+  ].join("\n\n");
+}
+
 export async function getPlannerJob(jobId: string): Promise<PlannerJobSummary | null> {
   const job = await prisma.plannerJob.findUnique({ where: { id: jobId } });
   return job ? toPlannerJobSummary(job) : null;
