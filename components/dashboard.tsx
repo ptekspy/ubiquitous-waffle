@@ -4,11 +4,14 @@ import { compactNumber } from "@/utils/compact-number";
 import { formatDate } from "@/utils/format-date";
 import { numberFormat } from "@/utils/number-format";
 import { ContentTypeList } from "./content-type-list";
+import { DashboardHealthCard } from "./dashboard-health-card";
 import { PanelHeading } from "./panel-heading";
 import { PlannerCard } from "./planner-card";
 import { StatCard } from "./stat-card";
 import { SubredditTable } from "./subreddit-table";
 import { Timeline } from "./timeline";
+import { TopCommentsList } from "./top-comments-list";
+import { TopPostsList } from "./top-posts-list";
 import { WarningCard } from "./warning-card";
 
 export type DashboardProps = {
@@ -19,13 +22,15 @@ export function Dashboard({ data }: DashboardProps) {
   return (
     <section className="grid gap-[22px]">
       <WarningCard warnings={data.warnings} />
+      <DashboardHealthCard analytics={data.analytics} />
       <PlannerCard initialJob={data.plannerJob} />
 
       <div className={`${cardClass} flex items-center justify-between gap-5 p-[26px] max-sm:flex-col max-sm:items-stretch`}>
         <div>
-          <span className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]">Latest scan</span>
+          <span className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]">Latest persisted scan</span>
           <h2 className="my-2 text-[clamp(2rem,4vw,3.2rem)] font-black tracking-[-0.05em]">u/{data.profile.username}</h2>
           <p className={mutedClass}>Profile created {formatDate(data.profile.createdUtc)}</p>
+          <p className={mutedClass}>Scan fetched {formatDate(Math.floor(new Date(data.analytics.fetchedAt).getTime() / 1000))}</p>
           {data.scanId ? <p className="mt-2 text-xs text-[#c9adbd]">Saved scan: {data.scanId}</p> : null}
         </div>
         <div className="min-w-[188px] rounded-3xl bg-linear-to-br from-[#ff4f91]/[0.22] to-[#ffb86b]/[0.22] p-[18px] text-right max-sm:text-left">
@@ -74,6 +79,17 @@ export function Dashboard({ data }: DashboardProps) {
       <section className={`${cardClass} overflow-hidden p-6`}>
         <PanelHeading eyebrow="Momentum" title="Recent activity score" />
         <Timeline rows={data.analytics.timeline} />
+      </section>
+
+      <section className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.75fr)]">
+        <article className={`${cardClass} overflow-hidden p-6`}>
+          <PanelHeading eyebrow="Content intelligence" title="Top posts" />
+          <TopPostsList posts={data.analytics.topPosts} />
+        </article>
+        <article className={`${cardClass} overflow-hidden p-6`}>
+          <PanelHeading eyebrow="Engagement" title="Top comments" />
+          <TopCommentsList comments={data.analytics.topComments} />
+        </article>
       </section>
     </section>
   );
