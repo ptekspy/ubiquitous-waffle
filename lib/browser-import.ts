@@ -130,11 +130,12 @@ function toPost(raw: BrowserImportPost, index: number, username: string): Reddit
   const title = asString(raw.title);
   const subreddit = cleanSubreddit(raw.subreddit, title, raw.permalink, username);
   const permalink = absoluteRedditUrl(raw.permalink);
+  const rawId = asString(raw.id);
 
   if (!title || !subreddit || permalink === "https://www.reddit.com") return null;
 
   return {
-    id: redditIdFromPermalink(raw.permalink) || asString(raw.id, `browser-post-${index}`),
+    id: rawId || redditIdFromPermalink(raw.permalink) || `browser-post-${index}`,
     title,
     subreddit,
     permalink,
