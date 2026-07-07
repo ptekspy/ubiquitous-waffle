@@ -12,6 +12,7 @@ import type { ApiError } from "@/lib/api/types";
 import { sendExtensionMessage } from "@/lib/extension/client";
 import type { ExtensionPingResponse, ExtensionScanResponse, ExtensionState, LoadState } from "@/lib/extension/types";
 import type { AnalyzeResponse } from "@/lib/types";
+import { isApiError } from "@/utils/is-api-error";
 import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
 import { normaliseRedditUsername } from "@/utils/normalise-reddit-username";
 import { readJsonResponse } from "@/utils/read-json-response";
@@ -69,13 +70,13 @@ export default function Home() {
       });
       const payload = await readJsonResponse<AnalyzeResponse, ApiError>(response, JSON_FALLBACK_ERROR);
 
-      if (!response.ok) {
+      if (isApiError(payload)) {
         setState("error");
-        setError("error" in payload ? payload.error : "Unable to analyse browser import.");
+        setError(payload.error);
         return false;
       }
 
-      setData(payload as AnalyzeResponse);
+      setData(payload);
       setState("loaded");
       return true;
     } catch {
@@ -100,13 +101,13 @@ export default function Home() {
       const response = await fetch(`/api/analyze?username=${encodeURIComponent(normalisedUsername)}`);
       const payload = await readJsonResponse<AnalyzeResponse, ApiError>(response, JSON_FALLBACK_ERROR);
 
-      if (!response.ok) {
+      if (isApiError(payload)) {
         setState("error");
-        setError("error" in payload ? payload.error : "Unable to analyse this account.");
+        setError(payload.error);
         return;
       }
 
-      setData(payload as AnalyzeResponse);
+      setData(payload);
       setState("loaded");
     } catch {
       setState("error");
