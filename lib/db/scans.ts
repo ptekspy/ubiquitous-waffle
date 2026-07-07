@@ -76,9 +76,14 @@ function subredditSnapshotData(scanId: string, accountId: string, row: Subreddit
   };
 }
 
-export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics): Promise<SavedScan> {
+export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics, ownerId: string): Promise<SavedScan> {
   const account = await prisma.redditAccount.upsert({
-    where: { username: data.profile.username },
+    where: {
+      ownerUserId_username: {
+        ownerUserId: ownerId,
+        username: data.profile.username,
+      },
+    },
     update: {
       redditId: data.profile.id,
       createdUtc: data.profile.createdUtc,
@@ -91,6 +96,7 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
       iconUrl: data.profile.iconUrl,
     },
     create: {
+      ownerUserId: ownerId,
       redditId: data.profile.id,
       username: data.profile.username,
       createdUtc: data.profile.createdUtc,
