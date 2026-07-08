@@ -230,7 +230,7 @@ function AuthenticatedDashboard() {
 
       {data ? <Dashboard data={data} /> : <EmptyState />}
 
-      <details className="advanced-tools mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
+      <details className="advanced-tools mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]" id="advanced-tools">
         <summary>Advanced tools</summary>
         <div className="mt-4">
           <ManualImportCard importPayload={importPayload} setImportPayload={setImportPayload} onImport={analyseImport} loading={loading} />
