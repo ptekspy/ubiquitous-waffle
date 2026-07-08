@@ -32,7 +32,7 @@ export function ScanSetupCard({ username, setUsername, extensionState, extension
   }
 
   return (
-    <section className="scan-command mb-4 rounded-[22px] p-4">
+    <section className="scan-command mb-4 rounded-[22px] p-4" id="capture">
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)]">
         <form onSubmit={submit}>
           <label className="mb-2 block text-sm font-black text-[var(--text-muted)]" htmlFor="username">
