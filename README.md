@@ -2,7 +2,7 @@
 
 v0.3.0 of the PaidPolitely Reddit account analytics SaaS.
 
-This version adds Better Auth email/password accounts, console-printed email verification codes for local development, PostgreSQL scan persistence, a saved Reddit username per user, latest-dashboard hydration on reload, queued post deep dives, and the queued Ollama planner.
+This version adds Better Auth email/password accounts, console-printed email verification codes for local development, PostgreSQL scan persistence, a saved Reddit username per user, latest-dashboard hydration on reload, extension-backed local scheduled scans, queued post deep dives, and the queued Ollama planner.
 
 The extension does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
@@ -14,14 +14,14 @@ The extension does **not** read Reddit passwords, cookies, session tokens, priva
 - Saves one default Reddit username on the signed-in user.
 - Reloads the latest saved dashboard automatically after sign-in or page refresh.
 - Stores subreddits as first-class entities and links post/comment snapshots to them.
-- Queues each captured post for a deeper thread crawl.
+- Uses a local extension job queue for scheduled profile scans and post deep dives.
 - Stores refreshed post score, upvote ratio, comment count, estimated up/down vote split, and top thread comments.
 - Accepts a Reddit username, profile URL, or `u/username` value.
 - Uses the extension no-tab scan and quiet-tab fallback when server-side JSON is blocked.
 - Saves cleaned scans to PostgreSQL through Prisma 7.
 - Scopes saved Reddit accounts, scans, crawler jobs, and planner jobs to the signed-in user.
 - Queues next-post planner jobs instead of calling Ollama inline during the scan request.
-- Shows dashboard panels for health, stats, subreddit performance, format signal, timeline, top posts, top comments, and AI planning.
+- Shows dashboard panels for health, stats, account trend chart, local job queue, subreddit performance, format signal, timeline, top posts, top comments, and AI planning.
 
 ## Run locally
 
@@ -32,12 +32,11 @@ pnpm db:migrate
 pnpm dev
 ```
 
-Open `http://localhost:3000`.
+Open `http://localhost:3000` and keep the dashboard open with the PaidPolitely Capture extension enabled. The browser handles local scheduled profile scans and deep dives.
 
-In another terminal, run the persistent workers:
+In another terminal, run the persistent planner worker if you want AI planning:
 
 ```bash
-pnpm worker:crawler
 pnpm worker:planner
 ```
 
@@ -49,7 +48,7 @@ Copy `.env.example` to `.env.local` and set at least:
 DATABASE_URL="postgresql://user:password@localhost:5432/paidpolitely?schema=public"
 BETTER_AUTH_SECRET="replace-with-at-least-32-random-characters"
 BETTER_AUTH_URL="http://localhost:3000"
-OLLAMA_BASE_URL="https://ollama.tik-track.com"
+OLLAMA_BASE_URL="http://localhost:11434"
 OLLAMA_PLANNER_MODEL=""
 PLANNER_WORKER_SECRET=""
 CRAWLER_WORKER_SECRET=""
@@ -61,17 +60,43 @@ Generate a local auth secret with:
 openssl rand -base64 32
 ```
 
+## Planner tuning
+
+The planner is local-first. By default it prefers smaller local Ollama models instead of selecting the largest model available.
+
+Recommended local settings:
+
+```bash
+OLLAMA_BASE_URL="http://localhost:11434"
+OLLAMA_PLANNER_MODEL="qwen2.5:7b-instruct"
+PLANNER_MAX_MODEL_B="14"
+PLANNER_TIMEOUT_MS="85000"
+PLANNER_NUM_CTX="4096"
+PLANNER_NUM_PREDICT="700"
+PLANNER_PROMPT_MAX_CHARS="7500"
+```
+
+Only enable very large models intentionally:
+
+```bash
+PLANNER_ALLOW_LARGE_MODELS="1"
+OLLAMA_PLANNER_MODEL="your-large-model-name"
+```
+
+For normal planner use, a 7B-14B instruct model should be much faster and less likely to hit proxy or timeout errors.
+
 ## Local auth and workspace flow
 
 1. Start `pnpm dev`.
-2. Start `pnpm worker:crawler` and `pnpm worker:planner` in separate terminals.
+2. Start `pnpm worker:planner` in another terminal if planning is needed.
 3. Open `http://localhost:3000`.
 4. Create an account with email and password.
 5. Watch the terminal running `pnpm dev`.
 6. Copy the printed verification code.
 7. Paste it into the verification form.
 8. Enter the Reddit username once and scan.
-9. Refresh the page or sign out/in again; the saved username and latest persisted dashboard reload automatically.
+9. Keep the dashboard open for scheduled extension-backed scans and deep dives.
+10. Refresh the page or sign out/in again; the saved username and latest persisted dashboard reload automatically.
 
 ## Workspace API
 
@@ -96,22 +121,25 @@ Content-Type: application/json
 
 ## Post crawler queue
 
-Scan imports create one post deep-dive job per captured post.
+Manual scan imports create one post deep-dive job per captured post. Scheduled lightweight profile scans do not create deep-dive jobs.
 
-The persistent crawler calls:
+Local deep dives are handled by the dashboard and PaidPolitely Capture extension. The browser claims due jobs from:
 
 ```http
-POST /api/crawler/posts/process
-Authorization: Bearer <CRAWLER_WORKER_SECRET>
+GET /api/crawler/posts/next
 ```
 
-Local development can omit `CRAWLER_WORKER_SECRET`; if it is blank the endpoint can also use `PLANNER_WORKER_SECRET`.
+Then imports the captured thread through:
+
+```http
+POST /api/crawler/posts/import
+```
 
 Reddit does not expose exact raw likes. The crawler stores public score, upvote ratio, comment count, estimated upvotes/downvotes, and thread comments.
 
 ## Planner queue
 
-Scan imports create a queued planner job. The website does not call Ollama directly while handling the scan request.
+Manual scan imports create a queued planner job. The website does not call Ollama directly while handling the scan request. Scheduled profile scans do not queue planner jobs.
 
 The persistent planner calls:
 
