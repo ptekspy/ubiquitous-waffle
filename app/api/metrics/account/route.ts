@@ -8,12 +8,11 @@ import type { AccountMetricHistory } from "@/lib/types";
 export const dynamic = "force-dynamic";
 
 type WindowKey = AccountMetricHistory["window"];
-
 type ErrorResponse = {
   error: string;
 };
 
-const WINDOW_MS: Record<WindowKey, number> = {
+const WINDOW_MS: Record<Exclude<WindowKey, "all">, number> = {
   hour: 60 * 60 * 1000,
   day: 24 * 60 * 60 * 1000,
   week: 7 * 24 * 60 * 60 * 1000,
@@ -21,7 +20,7 @@ const WINDOW_MS: Record<WindowKey, number> = {
 
 function windowKey(request: NextRequest): WindowKey {
   const value = request.nextUrl.searchParams.get("window");
-  return value === "hour" || value === "week" ? value : "day";
+  return value === "hour" || value === "week" || value === "all" ? value : "day";
 }
 
 export async function GET(request: NextRequest): Promise<NextResponse<AccountMetricHistory | ErrorResponse>> {
@@ -29,7 +28,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<AccountMet
   if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
 
   const selectedWindow = windowKey(request);
-  const since = new Date(Date.now() - WINDOW_MS[selectedWindow]);
+  const since = selectedWindow === "all" ? null : new Date(Date.now() - WINDOW_MS[selectedWindow]);
 
   const account = await prisma.redditAccount.findFirst({
     where: { ownerUserId: user.id },
@@ -45,7 +44,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<AccountMet
     prisma.accountMetricSnapshot.findMany({
       where: {
         accountId: account.id,
-        capturedAt: { gte: since },
+        ...(since ? { capturedAt: { gte: since } } : {}),
       },
       orderBy: { capturedAt: "asc" },
       select: {
@@ -72,6 +71,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<AccountMet
       awarderKarma: point.awarderKarma,
       followerCount: point.followerCount,
     })),
-    events: insights.events.filter((event) => new Date(event.capturedAt).getTime() >= since.getTime()),
+    events: since ? insights.events.filter((event) => new Date(event.capturedAt).getTime() >= since.getTime()) : insights.events,
   });
 }
