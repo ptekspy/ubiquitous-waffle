@@ -13,9 +13,9 @@ export function UserMenu() {
   }
 
   return (
-    <div className="mb-5 flex items-center justify-between gap-3 rounded-3xl border border-white/12 bg-white/[0.07] p-3 text-sm text-[#c9adbd]">
-      <span>Signed in as <strong className="text-[#ffe6f0]">{session.data.user.email}</strong></span>
-      <button className="rounded-2xl border border-white/12 bg-white/[0.08] px-4 py-2 font-extrabold text-[#ffe6f0]" type="button" onClick={signOut}>Sign out</button>
+    <div className="mb-4 flex items-center justify-between gap-3 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-3 text-sm text-[var(--text-muted)] shadow-[var(--shadow-soft)]">
+      <span>Signed in as <strong className="text-[var(--text)]">{session.data.user.email}</strong></span>
+      <button className="button-secondary min-h-10 px-4" type="button" onClick={signOut}>Sign out</button>
     </div>
   );
 }
