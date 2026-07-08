@@ -11,10 +11,10 @@ export function ContentTypeList({ rows }: ContentTypeListProps) {
   return (
     <div className="grid gap-3.5 [grid-template-columns:repeat(auto-fit,minmax(130px,1fr))]">
       {rows.map((row) => (
-        <div className="rounded-2xl border border-white/12 bg-white/5 p-3.5" key={row.type}>
-          <strong className="mb-2 block text-lg capitalize">{row.type}</strong>
-          <span className="block text-sm text-[#c9adbd]">{row.posts} posts</span>
-          <small className="block text-sm text-[#c9adbd]">{row.averageScore} avg score</small>
+        <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-muted)] p-3.5" key={row.type}>
+          <strong className="mb-2 block text-lg capitalize text-[var(--text)]">{row.type}</strong>
+          <span className="block text-sm text-[var(--text-muted)]">{row.posts} posts</span>
+          <small className="block text-sm text-[var(--text-muted)]">{row.averageScore} avg score</small>
         </div>
       ))}
     </div>
