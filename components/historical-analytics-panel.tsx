@@ -42,6 +42,15 @@ type ImportResult = {
   };
 };
 
+type FolderImportResult = {
+  directory: string;
+  filesFound: number;
+  filesImported: number;
+  filesSkipped: number;
+  failed: Array<{ fileName: string; error: string }>;
+  imported: ImportResult[];
+};
+
 type ReparseResult = {
   snapshotsChecked: number;
   snapshotsReparsed: number;
@@ -178,6 +187,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
   const [sourceFileName, setSourceFileName] = useState("");
   const [state, setState] = useState<LoadState>("idle");
   const [importState, setImportState] = useState<LoadState>("idle");
+  const [folderImportState, setFolderImportState] = useState<LoadState>("idle");
   const [reparseState, setReparseState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
@@ -234,6 +244,32 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
     }
   }
 
+  async function submitFolderImport() {
+    setFolderImportState("loading");
+    setImportMessage(null);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/history/snapshots/import", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ username: username.trim() || undefined }),
+      });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Unable to import folder.");
+      const result = payload as FolderImportResult;
+      const failedBit = result.filesSkipped > 0 ? ` ${result.filesSkipped} file${result.filesSkipped === 1 ? "" : "s"} failed or were skipped.` : "";
+      setImportMessage(`Imported ${result.filesImported}/${result.filesFound} dated HTML files from ${result.directory}.${failedBit}`);
+      setFolderImportState("loaded");
+      window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
+      window.dispatchEvent(new Event("paidpolitely-workspace-refresh"));
+      await load();
+    } catch (folderImportError) {
+      setFolderImportState("error");
+      setError(folderImportError instanceof Error ? folderImportError.message : "Unable to import folder.");
+    }
+  }
+
   async function submitFollowerReparse() {
     setReparseState("loading");
     setImportMessage(null);
@@ -267,10 +303,10 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
 
   const selectedMetric = metrics.find((item) => item.key === metric) ?? metrics[0];
   const points = history?.points ?? [];
-  const hasImportedHistory = snapshots.length > 0 || importState === "loaded";
+  const hasImportedHistory = snapshots.length > 0 || importState === "loaded" || folderImportState === "loaded";
   const setupSteps = [
     { label: "Add username", detail: username.trim() ? `u/${username.trim()}` : "Enter the Reddit username at the top.", done: Boolean(username.trim()) },
-    { label: "Import HTML", detail: hasImportedHistory ? "Historical observations are loaded." : "Upload a dated Reddit profile HTML/TXT snapshot.", done: hasImportedHistory },
+    { label: "Import HTML", detail: hasImportedHistory ? "Historical observations are loaded." : "Upload snapshots or import data/historical-snapshots.", done: hasImportedHistory },
     { label: "Run first scan", detail: hasLiveScan ? "Live scan data is active." : "Run extension scan to start live profile and deep-dive automation.", done: hasLiveScan },
   ];
   const summaryCards = useMemo(() => [
@@ -313,10 +349,11 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
           <label className="mt-3 grid gap-1 text-sm font-bold text-[var(--text-muted)]">Or paste HTML / JSON<textarea className="input-field min-h-[150px]" placeholder="Paste the Reddit profile HTML, .txt contents, or old PaidPolitely JSON capture here" value={content} onChange={(event) => setContent(event.target.value)} /></label>
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="button-primary" type="button" disabled={importState === "loading" || (!file && !content.trim())} onClick={() => void submitImport()}>{importState === "loading" ? "Importing…" : "Import historical snapshot"}</button>
+            <button className="button-secondary" type="button" disabled={folderImportState === "loading"} onClick={() => void submitFolderImport()}>{folderImportState === "loading" ? "Importing folder…" : "Import folder"}</button>
             <button className="button-secondary" type="button" disabled={reparseState === "loading" || snapshots.length === 0} onClick={() => void submitFollowerReparse()}>{reparseState === "loading" ? "Reparsing…" : "Reparse followers"}</button>
             <button className="button-secondary" type="button" disabled={!username.trim()} onClick={() => void onRunFirstScan()}>{hasLiveScan ? "Run scan again" : "Run first scan"}</button>
           </div>
-          <p className="mt-3 text-xs text-[var(--text-muted)]">Follower reparsing uses stored raw HTML where available and also clears any old zero-count follower records.</p>
+          <p className="mt-3 text-xs text-[var(--text-muted)]">Folder import reads data/historical-snapshots by default. Name files like 2026-07-08-20-30.html, or set HISTORICAL_SNAPSHOT_IMPORT_DIR.</p>
         </article>
 
         <article className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
