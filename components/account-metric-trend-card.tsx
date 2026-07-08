@@ -12,7 +12,7 @@ type ObservedMetricKey = "totalKarma" | "linkKarma" | "commentKarma" | "follower
 type MetricKey = ObservedMetricKey | "backfilledScore" | "backfilledDailyScore";
 
 type MetricConfig = { key: MetricKey; label: string; axisLabel: string; mode: "observed" | "backfilled" };
-type ChartPoint = { index: number; capturedAt: string; value: number; x: number; y: number };
+type ChartPoint = { index: number; capturedAt: string; value: number; time: number; x: number; y: number };
 type ChartScale = { min: number; max: number; ticks: number[] };
 type ChartEvent = AccountMetricEvent & { x: number };
 
@@ -83,9 +83,15 @@ function chartScale(values: number[]): ChartScale {
   return { min, max: Math.max(max, min + step), ticks };
 }
 
-function xForIndex(index: number, count: number): number {
-  if (count <= 1) return plot.left + plot.width / 2;
-  return plot.left + (index / (count - 1)) * plot.width;
+function timeValue(value: string): number | null {
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function xForTime(time: number, minTime: number, maxTime: number): number {
+  const spread = Math.max(maxTime - minTime, 1);
+  if (spread <= 1) return plot.left + plot.width / 2;
+  return plot.left + ((time - minTime) / spread) * plot.width;
 }
 
 function yForValue(value: number, scale: ChartScale): number {
@@ -122,24 +128,29 @@ function formatPointTime(value: string, windowKey: WindowKey, imported = false):
 
 function xAxisLabels(points: ChartPoint[], windowKey: WindowKey, imported = false): Array<{ x: number; label: string }> {
   if (points.length === 0) return [];
+  const first = points[0];
+  const last = points.at(-1) ?? first;
+  const spread = Math.max(last.time - first.time, 1);
+  if (spread <= 1) return [{ x: first.x, label: formatPointTime(first.capturedAt, windowKey, imported) }];
   if (points.length <= 4) return points.map((point) => ({ x: point.x, label: formatPointTime(point.capturedAt, windowKey, imported) }));
-  const indexes = new Set([0, Math.floor((points.length - 1) / 2), points.length - 1]);
-  if (points.length > 8) {
-    indexes.add(Math.floor((points.length - 1) * 0.25));
-    indexes.add(Math.floor((points.length - 1) * 0.75));
-  }
-  return [...indexes].sort((a, b) => a - b).map((index) => ({ x: points[index].x, label: formatPointTime(points[index].capturedAt, windowKey, imported) }));
+  const fractions = points.length > 8 ? [0, 0.25, 0.5, 0.75, 1] : [0, 0.5, 1];
+  return fractions.map((fraction) => {
+    const time = first.time + fraction * spread;
+    return { x: xForTime(time, first.time, last.time), label: formatPointTime(new Date(time).toISOString(), windowKey, imported) };
+  });
 }
 
 function eventMarkers(events: AccountMetricEvent[], points: ChartPoint[]): ChartEvent[] {
   if (points.length === 0) return [];
-  const minTime = new Date(points[0].capturedAt).getTime();
-  const maxTime = new Date(points.at(-1)?.capturedAt ?? points[0].capturedAt).getTime();
-  const spread = Math.max(maxTime - minTime, 1);
+  const minTime = points[0].time;
+  const maxTime = points.at(-1)?.time ?? minTime;
 
   return events
-    .map((event) => ({ ...event, x: plot.left + ((new Date(event.capturedAt).getTime() - minTime) / spread) * plot.width }))
-    .filter((event) => Number.isFinite(event.x) && event.x >= plot.left && event.x <= plot.right);
+    .map((event) => {
+      const eventTime = timeValue(event.capturedAt);
+      return eventTime === null ? null : { ...event, x: xForTime(eventTime, minTime, maxTime) };
+    })
+    .filter((event): event is ChartEvent => Boolean(event) && Number.isFinite(event.x) && event.x >= plot.left && event.x <= plot.right);
 }
 
 function latest(points: AccountMetricPoint[]): AccountMetricPoint | null { return points.at(-1) ?? null; }
@@ -202,19 +213,30 @@ export function AccountMetricTrendCard() {
     if (metricKey === "backfilledScore" || metricKey === "backfilledDailyScore") {
       const importedPoints = backfilledHistory?.points ?? [];
       const rows = importedPoints
-        .map((point, index) => ({ point, index, value: metricKey === "backfilledScore" ? point.cumulativeScore : point.scoreDelta }))
-        .filter((row) => Number.isFinite(row.value));
+        .map((point, index) => {
+          const capturedAt = `${point.date}T00:00:00.000Z`;
+          return { point, index, capturedAt, value: metricKey === "backfilledScore" ? point.cumulativeScore : point.scoreDelta, time: timeValue(capturedAt) };
+        })
+        .filter((row): row is { point: (typeof importedPoints)[number]; index: number; capturedAt: string; value: number; time: number } => Number.isFinite(row.value) && row.time !== null)
+        .sort((a, b) => a.time - b.time);
       if (rows.length === 0) return { points: [] as ChartPoint[], scale: null as ChartScale | null };
       const scale = chartScale(rows.map((row) => row.value));
-      const chartPoints = rows.map((row, index) => ({ index: row.index, capturedAt: `${row.point.date}T00:00:00.000Z`, value: row.value, x: xForIndex(index, rows.length), y: yForValue(row.value, scale) }));
+      const minTime = rows[0].time;
+      const maxTime = rows.at(-1)?.time ?? minTime;
+      const chartPoints = rows.map((row, index) => ({ index, capturedAt: row.capturedAt, value: row.value, time: row.time, x: xForTime(row.time, minTime, maxTime), y: yForValue(row.value, scale) }));
       return { points: chartPoints, scale };
     }
 
     if (!observedMetricKeys.has(metricKey)) return { points: [] as ChartPoint[], scale: null as ChartScale | null };
-    const rows = points.map((point, index) => ({ point, index, value: metricValue(point, metricKey as ObservedMetricKey) })).filter((row): row is { point: AccountMetricPoint; index: number; value: number } => row.value !== null);
+    const rows = points
+      .map((point, index) => ({ point, index, value: metricValue(point, metricKey as ObservedMetricKey), time: timeValue(point.capturedAt) }))
+      .filter((row): row is { point: AccountMetricPoint; index: number; value: number; time: number } => row.value !== null && row.time !== null)
+      .sort((a, b) => a.time - b.time);
     if (rows.length === 0) return { points: [] as ChartPoint[], scale: null as ChartScale | null };
     const scale = chartScale(rows.map((row) => row.value));
-    const chartPoints = rows.map((row, index) => ({ index: row.index, capturedAt: row.point.capturedAt, value: row.value, x: xForIndex(index, rows.length), y: yForValue(row.value, scale) }));
+    const minTime = rows[0].time;
+    const maxTime = rows.at(-1)?.time ?? minTime;
+    const chartPoints = rows.map((row, index) => ({ index, capturedAt: row.point.capturedAt, value: row.value, time: row.time, x: xForTime(row.time, minTime, maxTime), y: yForValue(row.value, scale) }));
     return { points: chartPoints, scale };
   }, [backfilledHistory?.points, metricKey, points]);
 
@@ -274,7 +296,7 @@ export function AccountMetricTrendCard() {
               <line x1={plot.left} x2={plot.right} y1={plot.bottom} y2={plot.bottom} stroke="var(--border-strong)" strokeWidth="1.5" />
               <text x={plot.left} y={18} className="fill-[var(--text-muted)] text-[12px] font-extrabold uppercase tracking-[0.18em]">{metric.axisLabel}</text>
               {xLabels.map((label) => <g key={`${label.x}-${label.label}`}><line x1={label.x} x2={label.x} y1={plot.bottom} y2={plot.bottom + 6} stroke="var(--border-strong)" strokeWidth="1.5" /><text x={label.x} y={plot.bottom + 28} textAnchor="middle" className="fill-[var(--text-muted)] text-[12px] font-bold">{label.label}</text></g>)}
-              {markers.map((event) => <g key={event.id}><line x1={event.x} x2={event.x} y1={plot.top} y2={plot.bottom} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="3 7" opacity="0.7" /><path d={`M ${event.x} ${plot.top - 10} L ${event.x + 7} ${plot.top - 2} L ${event.x} ${plot.top + 6} L ${event.x - 7} ${plot.top - 2} Z`} fill={event.type === "spike" ? "var(--ok)" : "var(--accent)"}><title>{`${event.label} · ${event.detail}`}</title></path></g>)}
+              {markers.map((event) => <g key={event.id}><line x1={event.x} x2={event.x} y1={plot.top} y2={plot.bottom} stroke="var(--border-strong)" strokeWidth="1" strokeDasharray="3 7" opacity="0.7" /><path d={`M ${event.x} ${plot.top - 10} L ${event.x + 7} ${plot.top - 2} L ${event.x} ${plot.top + 6} L ${event.x - 7} ${plot.top - 2} Z`} fill={event.type === "spike" ? "var(--ok)" : "var(--accent)"><title>{`${event.label} · ${event.detail}`}</title></path></g>)}
               {area ? <path d={area} fill="url(#accountMetricArea)" /> : null}
               <path d={path} fill="none" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
               {chartData.points.map((point, index) => <circle key={`${point.capturedAt}-${point.value}`} cx={point.x} cy={point.y} r={activeIndex === index ? 6 : 4} fill="var(--surface)" stroke="var(--accent)" strokeWidth={activeIndex === index ? 4 : 3} />)}
