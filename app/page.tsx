@@ -2,15 +2,16 @@
 
 import { useEffect, useState } from "react";
 
+import { AppShell } from "@/components/app-shell";
 import { AuthGate } from "@/components/auth-gate";
 import { BrowserPostCrawler } from "@/components/browser-post-crawler";
 import { Dashboard } from "@/components/dashboard";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorCard } from "@/components/error-card";
-import { Hero } from "@/components/hero";
 import { ManualImportCard } from "@/components/manual-import-card";
 import { ScanSetupCard } from "@/components/scan-setup-card";
 import { UserMenu } from "@/components/user-menu";
+import { WorkspaceHeader } from "@/components/workspace-header";
 import { fetchPublicAnalysis, fetchWorkspace, importBrowserPayload, saveWorkspaceRedditUsername } from "@/lib/api/client";
 import { sendExtensionMessage } from "@/lib/extension/client";
 import type { ExtensionPingResponse, ExtensionScanResponse, ExtensionState, LoadState } from "@/lib/extension/types";
@@ -190,37 +191,35 @@ function AuthenticatedDashboard() {
   const loading = state === "loading" || workspaceState === "loading";
 
   return (
-    <main className="min-h-screen bg-[#120b16] bg-[radial-gradient(circle_at_top_left,rgba(255,79,145,0.28),transparent_36rem),radial-gradient(circle_at_top_right,rgba(255,184,107,0.18),transparent_34rem),linear-gradient(180deg,rgba(255,255,255,0.025),transparent_26rem)] px-4 py-10 text-[#fff8fb] sm:px-6 lg:px-8">
-      <div className="mx-auto w-full max-w-[1180px]">
-        <BrowserPostCrawler scanId={data?.scanId ?? null} extensionState={extensionState} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
-        <UserMenu />
-        <Hero />
+    <AppShell>
+      <BrowserPostCrawler scanId={data?.scanId ?? null} extensionState={extensionState} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
+      <UserMenu />
+      <WorkspaceHeader data={data} />
 
-        {state === "error" && error ? <ErrorCard message={error} /> : null}
-        {workspaceState === "error" && error ? <ErrorCard message={error} /> : null}
+      {state === "error" && error ? <ErrorCard message={error} /> : null}
+      {workspaceState === "error" && error ? <ErrorCard message={error} /> : null}
 
-        <ScanSetupCard
-          username={username}
-          setUsername={setUsername}
-          extensionState={extensionState}
-          extensionMessage={extensionMessage}
-          extensionVersion={extensionVersion}
-          hasData={Boolean(data)}
-          loading={loading}
-          onCheck={checkExtension}
-          onScan={scanWithExtension}
-          onTryPublicJson={analysePublicJson}
-        />
+      <ScanSetupCard
+        username={username}
+        setUsername={setUsername}
+        extensionState={extensionState}
+        extensionMessage={extensionMessage}
+        extensionVersion={extensionVersion}
+        hasData={Boolean(data)}
+        loading={loading}
+        onCheck={checkExtension}
+        onScan={scanWithExtension}
+        onTryPublicJson={analysePublicJson}
+      />
 
-        {data ? <Dashboard data={data} /> : <EmptyState />}
+      {data ? <Dashboard data={data} /> : <EmptyState />}
 
-        <ManualImportCard
-          importPayload={importPayload}
-          setImportPayload={setImportPayload}
-          onImport={analyseImport}
-          loading={loading}
-        />
-      </div>
-    </main>
+      <details className="advanced-tools mt-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface)] p-4 shadow-[var(--shadow-soft)]">
+        <summary>Advanced tools</summary>
+        <div className="mt-4">
+          <ManualImportCard importPayload={importPayload} setImportPayload={setImportPayload} onImport={analyseImport} loading={loading} />
+        </div>
+      </details>
+    </AppShell>
   );
 }
