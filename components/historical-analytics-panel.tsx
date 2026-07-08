@@ -9,6 +9,12 @@ import { compactNumber } from "@/utils/compact-number";
 type LoadState = "idle" | "loading" | "loaded" | "error";
 type MetricKey = "scoreDelta" | "cumulativeScore" | "postScore" | "commentScore" | "postsCreated" | "commentsMade" | "repliesReceived" | "viewsDelta";
 
+type HistoricalAnalyticsPanelProps = {
+  username: string;
+  hasLiveScan: boolean;
+  onRunFirstScan: () => void | Promise<void>;
+};
+
 type SnapshotSummary = {
   id: string;
   capturedAt: string;
@@ -27,6 +33,13 @@ type ImportResult = {
   postCount: number;
   commentCount: number;
   username: string | null;
+  accountMetricImported?: boolean;
+  profileMetrics?: {
+    totalKarma: number | null;
+    linkKarma: number | null;
+    commentKarma: number | null;
+    followerCount: number | null;
+  };
 };
 
 const presets: Array<{ key: HistoricalRangePreset; label: string }> = [
@@ -69,6 +82,10 @@ function metricValue(point: HistoricalPerformancePoint, metric: MetricKey): numb
 
 function chartPath(points: Array<{ x: number; y: number }>): string {
   return points.map((point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)} ${point.y.toFixed(2)}`).join(" ");
+}
+
+function setupStepClass(done: boolean) {
+  return done ? "rounded-[18px] border border-[var(--ok)] bg-[var(--ok-soft)] p-4" : "rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4";
 }
 
 function HistoricalChart({ points, metric }: { points: HistoricalPerformancePoint[]; metric: MetricKey }) {
@@ -139,7 +156,7 @@ async function fetchSnapshots(): Promise<SnapshotSummary[]> {
   return Array.isArray(payload.snapshots) ? payload.snapshots : [];
 }
 
-export function HistoricalAnalyticsPanel() {
+export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan }: HistoricalAnalyticsPanelProps) {
   const [preset, setPreset] = useState<HistoricalRangePreset>("90d");
   const [metric, setMetric] = useState<MetricKey>("scoreDelta");
   const [from, setFrom] = useState("");
@@ -179,6 +196,7 @@ export function HistoricalAnalyticsPanel() {
     form.set("capturedDate", capturedDate);
     form.set("capturedTime", capturedTime);
     form.set("timezone", "Europe/London");
+    if (username.trim()) form.set("username", username.trim());
     if (file) form.set("file", file);
     if (!file && content.trim()) form.set("content", content);
     if (sourceFileName.trim()) form.set("sourceFileName", sourceFileName.trim());
@@ -188,10 +206,16 @@ export function HistoricalAnalyticsPanel() {
       const payload = await response.json();
       if (!response.ok) throw new Error(payload.error ?? "Unable to import snapshot.");
       const result = payload as ImportResult;
-      setImportMessage(`Imported ${result.postCount} posts and ${result.commentCount} comments from ${result.sourceFileName ?? result.source}.`);
+      const metricBits = [
+        result.profileMetrics?.totalKarma !== null && result.profileMetrics?.totalKarma !== undefined ? `${compactNumber(result.profileMetrics.totalKarma)} karma` : null,
+        result.profileMetrics?.followerCount !== null && result.profileMetrics?.followerCount !== undefined ? `${compactNumber(result.profileMetrics.followerCount)} followers` : null,
+      ].filter(Boolean).join(" · ");
+      setImportMessage(`Imported ${result.postCount} posts and ${result.commentCount} comments from ${result.sourceFileName ?? result.source}${metricBits ? `, plus ${metricBits}` : ""}.`);
       setImportState("loaded");
       setContent("");
       setFile(null);
+      window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
+      window.dispatchEvent(new Event("paidpolitely-workspace-refresh"));
       await load();
     } catch (importError) {
       setImportState("error");
@@ -206,6 +230,12 @@ export function HistoricalAnalyticsPanel() {
 
   const selectedMetric = metrics.find((item) => item.key === metric) ?? metrics[0];
   const points = history?.points ?? [];
+  const hasImportedHistory = snapshots.length > 0 || importState === "loaded";
+  const setupSteps = [
+    { label: "Add username", detail: username.trim() ? `u/${username.trim()}` : "Enter the Reddit username at the top.", done: Boolean(username.trim()) },
+    { label: "Import HTML", detail: hasImportedHistory ? "Historical observations are loaded." : "Upload a dated Reddit profile HTML/TXT snapshot.", done: hasImportedHistory },
+    { label: "Run first scan", detail: hasLiveScan ? "Live scan data is active." : "Run extension scan to start live profile and deep-dive automation.", done: hasLiveScan },
+  ];
   const summaryCards = useMemo(() => [
     ["Score", history?.summary.scoreDelta ?? 0],
     ["Post score", history?.summary.postScore ?? 0],
@@ -220,10 +250,14 @@ export function HistoricalAnalyticsPanel() {
       <div className="flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <span className="ui-eyebrow">Historical analytics</span>
-          <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Backfilled score and comment history</h2>
-          <p className={mutedClass}>Import dated Reddit HTML/TXT snapshots. First observed scores are backfilled to the post/comment date; later changes are counted on the observation date.</p>
+          <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Backfilled profile, score and comment history</h2>
+          <p className={mutedClass}>Import dated Reddit HTML/TXT snapshots. Profile karma and followers feed the account trend graph; content scores feed the historical graphs.</p>
         </div>
         <span className="status-pill">{state === "loading" ? "Refreshing" : `${snapshots.length} snapshots`}</span>
+      </div>
+
+      <div className="grid gap-3 md:grid-cols-3">
+        {setupSteps.map((step, index) => <div className={setupStepClass(step.done)} key={step.label}><span className="ui-eyebrow">Step {index + 1}</span><strong className="mt-1 block text-[var(--text)]">{step.done ? "✓ " : ""}{step.label}</strong><small className="mt-1 block text-[var(--text-muted)]">{step.detail}</small></div>)}
       </div>
 
       {error ? <p className="rounded-[14px] border border-[var(--border)] bg-[var(--issue-soft)] p-3 text-sm font-bold text-[var(--issue)]">{error}</p> : null}
@@ -232,6 +266,7 @@ export function HistoricalAnalyticsPanel() {
       <div className="grid gap-4 xl:grid-cols-[minmax(0,0.8fr)_minmax(0,1.2fr)]">
         <article className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
           <h3 className="mb-3 text-lg font-extrabold text-[var(--text)]">Import snapshot</h3>
+          <p className="mb-3 text-sm text-[var(--text-muted)]">Current username: <strong className="text-[var(--text)]">{username.trim() ? `u/${username.trim()}` : "not set"}</strong></p>
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="grid gap-1 text-sm font-bold text-[var(--text-muted)]">Snapshot date<input className="input-field" type="date" value={capturedDate} onChange={(event) => setCapturedDate(event.target.value)} /></label>
             <label className="grid gap-1 text-sm font-bold text-[var(--text-muted)]">Snapshot time<input className="input-field" type="time" value={capturedTime} onChange={(event) => setCapturedTime(event.target.value)} /></label>
@@ -239,7 +274,11 @@ export function HistoricalAnalyticsPanel() {
           <label className="mt-3 grid gap-1 text-sm font-bold text-[var(--text-muted)]">TXT / HTML file<input className="input-field" type="file" accept=".txt,.html,.htm,text/plain,text/html" onChange={(event) => setFile(event.target.files?.[0] ?? null)} /></label>
           <label className="mt-3 grid gap-1 text-sm font-bold text-[var(--text-muted)]">Optional label<input className="input-field" placeholder="Jul 7 18:58 profile HTML" value={sourceFileName} onChange={(event) => setSourceFileName(event.target.value)} /></label>
           <label className="mt-3 grid gap-1 text-sm font-bold text-[var(--text-muted)]">Or paste HTML / JSON<textarea className="input-field min-h-[150px]" placeholder="Paste the Reddit profile HTML, .txt contents, or old PaidPolitely JSON capture here" value={content} onChange={(event) => setContent(event.target.value)} /></label>
-          <button className="button-primary mt-3" type="button" disabled={importState === "loading" || (!file && !content.trim())} onClick={() => void submitImport()}>{importState === "loading" ? "Importing…" : "Import historical snapshot"}</button>
+          <div className="mt-3 flex flex-wrap gap-2">
+            <button className="button-primary" type="button" disabled={importState === "loading" || (!file && !content.trim())} onClick={() => void submitImport()}>{importState === "loading" ? "Importing…" : "Import historical snapshot"}</button>
+            <button className="button-secondary" type="button" disabled={!username.trim()} onClick={() => void onRunFirstScan()}>{hasLiveScan ? "Run scan again" : "Run first scan"}</button>
+          </div>
+          <p className="mt-3 text-xs text-[var(--text-muted)]">After the first scan, keep this dashboard open: the local queue handles profile scans and post deep dives.</p>
         </article>
 
         <article className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
