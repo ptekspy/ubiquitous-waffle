@@ -3,7 +3,6 @@ import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
 import { formatDate } from "@/utils/format-date";
 import { numberFormat } from "@/utils/number-format";
-import { AccountMetricTrendCard } from "./account-metric-trend-card";
 import { AdvancedAnalyticsPanel } from "./advanced-analytics-panel";
 import { ContentTypeList } from "./content-type-list";
 import { DaresTrackerPanel } from "./dares-tracker-panel";
@@ -27,9 +26,6 @@ export function Dashboard({ data }: DashboardProps) {
     <section className="grid gap-4" id="overview">
       <WarningCard warnings={data.warnings} />
       <DashboardHealthCard analytics={data.analytics} />
-      <section id="trends" className="analytics-section">
-        <AccountMetricTrendCard />
-      </section>
       <PostInsightsPanel />
       <section id="intelligence" className="analytics-section">
         <AdvancedAnalyticsPanel />
