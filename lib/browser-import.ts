@@ -29,6 +29,9 @@ type BrowserImportProfile = {
   totalKarma?: unknown;
   linkKarma?: unknown;
   commentKarma?: unknown;
+  awardeeKarma?: unknown;
+  awarderKarma?: unknown;
+  followerCount?: unknown;
   over18?: unknown;
   iconUrl?: unknown;
 };
@@ -58,11 +61,17 @@ function asNumber(value: unknown, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
     const normalised = value.trim().toLowerCase().replace(/,/g, "");
-    const multiplier = normalised.endsWith("k") ? 1_000 : normalised.endsWith("m") ? 1_000_000 : 1;
-    const parsed = Number.parseFloat(normalised.replace(/[km]$/, ""));
+    const multiplier = normalised.endsWith("k") ? 1_000 : normalised.endsWith("m") ? 1_000_000 : normalised.endsWith("b") ? 1_000_000_000 : 1;
+    const parsed = Number.parseFloat(normalised.replace(/[kmb]$/, ""));
     if (Number.isFinite(parsed)) return Math.round(parsed * multiplier);
   }
   return fallback;
+}
+
+function asNullableNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = asNumber(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function asBoolean(value: unknown, fallback = false): boolean {
@@ -161,8 +170,9 @@ function toProfile(payload: BrowserImportPayload): RedditProfile {
     totalKarma,
     linkKarma,
     commentKarma,
-    awardeeKarma: 0,
-    awarderKarma: 0,
+    awardeeKarma: asNumber(profile.awardeeKarma, 0),
+    awarderKarma: asNumber(profile.awarderKarma, 0),
+    followerCount: asNullableNumber(profile.followerCount),
     over18: asBoolean(profile.over18, false),
     iconUrl: asString(profile.iconUrl) || null,
   };
