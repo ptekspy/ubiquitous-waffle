@@ -154,6 +154,40 @@ export type PostInsightsResponse = {
   rows: PostInsightRow[];
 };
 
+export type HistoricalRangePreset = "30d" | "90d" | "180d" | "365d" | "all" | "custom";
+
+export type HistoricalPerformancePoint = {
+  date: string;
+  label: string;
+  postScore: number;
+  commentScore: number;
+  scoreDelta: number;
+  cumulativeScore: number;
+  postsCreated: number;
+  commentsMade: number;
+  repliesReceived: number;
+  viewsDelta: number | null;
+  cumulativeViews: number | null;
+  sharesDelta: number | null;
+};
+
+export type HistoricalPerformanceResponse = {
+  generatedAt: string;
+  preset: HistoricalRangePreset;
+  from: string;
+  to: string;
+  summary: {
+    postScore: number;
+    commentScore: number;
+    scoreDelta: number;
+    postsCreated: number;
+    commentsMade: number;
+    repliesReceived: number;
+    viewsDelta: number | null;
+  };
+  points: HistoricalPerformancePoint[];
+};
+
 export type InsightSeverity = "good" | "watch" | "neutral";
 
 export type DashboardInsight = {
