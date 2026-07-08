@@ -20,14 +20,14 @@ export function ManualImportCard({ importPayload, setImportPayload, onImport, lo
   }
 
   return (
-    <details className={`${cardClass} mb-[18px] overflow-hidden`}>
-      <summary className="flex cursor-pointer list-none items-center justify-between gap-3.5 p-5 marker:hidden after:grid after:size-[34px] after:place-items-center after:rounded-full after:bg-white/[0.08] after:text-xl after:font-black after:text-[#c9adbd] after:content-['+'] open:after:content-['−']">
+    <details className={`${cardClass} mb-4 overflow-hidden`}>
+      <summary className="flex cursor-pointer list-none items-center justify-between gap-3.5 p-5 marker:hidden after:grid after:size-[34px] after:place-items-center after:rounded-full after:bg-[var(--surface-muted)] after:text-xl after:font-extrabold after:text-[var(--text-muted)] after:content-['+'] open:after:content-['−']">
         <span>
-          <span className="block font-black">Manual import / debugging fallback</span>
-          <small className="block text-[#c9adbd]">Use this only if the extension bridge fails.</small>
+          <span className="block font-extrabold text-[var(--text)]">Manual import / debugging fallback</span>
+          <small className="block text-[var(--text-muted)]">Use this only if the extension bridge fails.</small>
         </span>
       </summary>
-      <div className="grid gap-3.5 border-t border-white/12 p-5">
+      <div className="grid gap-3.5 border-t border-[var(--border)] p-5">
         <p className={`${mutedClass} leading-relaxed`}>
           Open the Reddit profile, paste the robust capture snippet into DevTools, let it scroll, then paste the copied JSON here.
           The importer will still clean duplicates, game cards, and comment-link rows.
