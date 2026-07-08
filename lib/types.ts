@@ -9,7 +9,7 @@ export type RedditProfile = {
   commentKarma: number;
   awardeeKarma: number;
   awarderKarma: number;
-  followerCount: number | null;
+  followerCount?: number | null;
   over18: boolean;
   iconUrl: string | null;
 };
