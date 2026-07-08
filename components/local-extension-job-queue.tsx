@@ -23,6 +23,12 @@ type ExtensionCrawlerResponse =
   | { ok: true; status: string; payload: unknown }
   | { ok: false; status?: string; error: string };
 
+type QueueSettings = {
+  profileScanInterval: number;
+  deepDiveInterval: number;
+  deepDiveBatchSize: number;
+};
+
 type JobKey = "profile" | "deepDive";
 type JobStatus = "waiting" | "running" | "success" | "error";
 
@@ -37,10 +43,10 @@ type JobView = {
   lastDurationMs?: number | null;
 };
 
-const PROFILE_INTERVAL_MS = 15 * 60 * 1000;
-const DEEP_DIVE_INTERVAL_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_PROFILE_INTERVAL_MS = 15 * 60 * 1000;
+const DEFAULT_DEEP_DIVE_INTERVAL_MS = 2 * 60 * 60 * 1000;
+const DEFAULT_DEEP_DIVE_BATCH_SIZE = 8;
 const TICK_MS = 1000;
-const DEEP_DIVE_BATCH_SIZE = 8;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
 
 function envInterval(raw: string | undefined, fallback: number): number {
@@ -48,12 +54,24 @@ function envInterval(raw: string | undefined, fallback: number): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
-function profileIntervalMs(): number {
-  return envInterval(process.env.NEXT_PUBLIC_PROFILE_SCAN_INTERVAL_MS, PROFILE_INTERVAL_MS);
+function defaultSettings(): QueueSettings {
+  return {
+    profileScanInterval: envInterval(process.env.NEXT_PUBLIC_PROFILE_SCAN_INTERVAL_MS, DEFAULT_PROFILE_INTERVAL_MS),
+    deepDiveInterval: envInterval(process.env.NEXT_PUBLIC_DEEP_DIVE_REFRESH_INTERVAL_MS, DEFAULT_DEEP_DIVE_INTERVAL_MS),
+    deepDiveBatchSize: DEFAULT_DEEP_DIVE_BATCH_SIZE,
+  };
 }
 
-function deepDiveIntervalMs(): number {
-  return envInterval(process.env.NEXT_PUBLIC_DEEP_DIVE_REFRESH_INTERVAL_MS, DEEP_DIVE_INTERVAL_MS);
+async function fetchQueueSettings(): Promise<QueueSettings> {
+  const response = await fetch(`/api/product/ops?ts=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) return defaultSettings();
+  const payload = await response.json();
+  const settings = payload?.settings ?? {};
+  return {
+    profileScanInterval: envInterval(String(settings.profileScanInterval ?? ""), defaultSettings().profileScanInterval),
+    deepDiveInterval: envInterval(String(settings.deepDiveInterval ?? ""), defaultSettings().deepDiveInterval),
+    deepDiveBatchSize: envInterval(String(settings.deepDiveBatchSize ?? ""), defaultSettings().deepDiveBatchSize),
+  };
 }
 
 function storageKey(username: string, key: JobKey): string {
@@ -61,6 +79,7 @@ function storageKey(username: string, key: JobKey): string {
 }
 
 function readLastRun(username: string, key: JobKey): number | null {
+  if (typeof window === "undefined") return null;
   const raw = window.localStorage.getItem(storageKey(username, key));
   const parsed = Number.parseInt(raw || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : null;
@@ -87,18 +106,16 @@ function duration(ms: number | null | undefined): string {
   return `${seconds}s`;
 }
 
-function initialJobs(username: string): JobView[] {
+function initialJobs(username: string, settings: QueueSettings): JobView[] {
   const profileLast = readLastRun(username, "profile");
   const deepLast = readLastRun(username, "deepDive");
-  const profileCadence = profileIntervalMs();
-  const deepCadence = deepDiveIntervalMs();
 
   return [
     {
       key: "profile",
       title: "Profile scan",
-      cadenceMs: profileCadence,
-      nextRunAt: nextRunAt(profileLast, profileCadence),
+      cadenceMs: settings.profileScanInterval,
+      nextRunAt: nextRunAt(profileLast, settings.profileScanInterval),
       lastRunAt: profileLast,
       status: "waiting",
       detail: "Uses the browser extension and your Reddit browser session.",
@@ -107,8 +124,8 @@ function initialJobs(username: string): JobView[] {
     {
       key: "deepDive",
       title: "Post deep dive",
-      cadenceMs: deepCadence,
-      nextRunAt: nextRunAt(deepLast, deepCadence),
+      cadenceMs: settings.deepDiveInterval,
+      nextRunAt: nextRunAt(deepLast, settings.deepDiveInterval),
       lastRunAt: deepLast,
       status: "waiting",
       detail: "Refreshes post scores, comment counts, replies, and thread comments through the extension.",
@@ -128,23 +145,40 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   const normalisedUsername = normaliseRedditUsername(username);
   const isReady = extensionState === "installed" && isValidRedditUsername(normalisedUsername);
   const [now, setNow] = useState(Date.now());
-  const [jobs, setJobs] = useState<JobView[]>(() => (normalisedUsername ? initialJobs(normalisedUsername) : []));
+  const [settings, setSettings] = useState<QueueSettings>(() => defaultSettings());
+  const [jobs, setJobs] = useState<JobView[]>([]);
   const runningRef = useRef<JobKey | null>(null);
   const usernameRef = useRef(normalisedUsername);
+  const settingsRef = useRef(settings);
   const refreshRef = useRef(onRefresh);
   const importedRef = useRef(onImported);
   const statusRef = useRef(onStatus);
 
   useEffect(() => {
     usernameRef.current = normalisedUsername;
+    settingsRef.current = settings;
     refreshRef.current = onRefresh;
     importedRef.current = onImported;
     statusRef.current = onStatus;
-  }, [normalisedUsername, onImported, onRefresh, onStatus]);
+  }, [normalisedUsername, onImported, onRefresh, onStatus, settings]);
 
   useEffect(() => {
-    if (!normalisedUsername) return;
-    setJobs(initialJobs(normalisedUsername));
+    let cancelled = false;
+
+    async function loadSettings() {
+      const nextSettings = await fetchQueueSettings();
+      if (cancelled) return;
+      setSettings(nextSettings);
+      if (normalisedUsername) setJobs(initialJobs(normalisedUsername, nextSettings));
+    }
+
+    void loadSettings();
+    const timer = window.setInterval(() => void loadSettings(), 60_000);
+
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
   }, [normalisedUsername]);
 
   function updateJob(key: JobKey, patch: Partial<JobView>) {
@@ -153,7 +187,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
   function markDone(key: JobKey, detail: string, startedAt: number) {
     const usernameValue = usernameRef.current;
-    const cadence = key === "profile" ? profileIntervalMs() : deepDiveIntervalMs();
+    const cadence = key === "profile" ? settingsRef.current.profileScanInterval : settingsRef.current.deepDiveInterval;
     const completedAt = Date.now();
     writeLastRun(usernameValue, key, completedAt);
     updateJob(key, {
@@ -221,7 +255,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     let completed = 0;
 
     try {
-      for (let index = 0; index < DEEP_DIVE_BATCH_SIZE; index += 1) {
+      for (let index = 0; index < settingsRef.current.deepDiveBatchSize; index += 1) {
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok) {
           updateJob("deepDive", { status: "error", detail: claim.error, lastDurationMs: Date.now() - startedAt });
@@ -295,19 +329,13 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         <div>
           <span className="ui-eyebrow">Local extension queue</span>
           <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Scheduled browser jobs</h2>
-          <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session.</p>
+          <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session. Cadence comes from Product Ops settings.</p>
         </div>
         <span className={isReady ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{isReady ? "Extension ready" : "Extension needed"}</span>
       </div>
 
       <div className="mb-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
-        {activeJob ? (
-          <p className="m-0 font-extrabold text-[var(--text)]">Currently running: {activeJob.title}</p>
-        ) : nextJob ? (
-          <p className="m-0 font-extrabold text-[var(--text)]">Next job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p>
-        ) : (
-          <p className="m-0 font-extrabold text-[var(--text)]">No local jobs scheduled.</p>
-        )}
+        {activeJob ? <p className="m-0 font-extrabold text-[var(--text)]">Currently running: {activeJob.title}</p> : nextJob ? <p className="m-0 font-extrabold text-[var(--text)]">Next job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p> : <p className="m-0 font-extrabold text-[var(--text)]">No local jobs scheduled.</p>}
       </div>
 
       <div className="grid gap-3 lg:grid-cols-2">
@@ -326,14 +354,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
                 <span>Next: {job.status === "running" ? "running now" : duration(job.nextRunAt - now)}</span>
                 <span className="ml-3 text-[var(--text-muted)]">Last duration: {duration(job.lastDurationMs)}</span>
               </div>
-              <button
-                className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
-                type="button"
-                disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)}
-                onClick={() => runNow(job.key)}
-              >
-                Run now
-              </button>
+              <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)} onClick={() => runNow(job.key)}>Run now</button>
             </div>
           </article>
         ))}
