@@ -20,6 +20,7 @@ const windows: Array<{ key: WindowKey; label: string }> = [
   { key: "hour", label: "Hour" },
   { key: "day", label: "Day" },
   { key: "week", label: "Week" },
+  { key: "all", label: "All" },
 ];
 
 const metrics: MetricConfig[] = [
@@ -114,7 +115,7 @@ function formatDelta(value: number): string {
 function formatPointTime(value: string, windowKey: WindowKey, imported = false): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
-  if (imported) return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "2-digit" }).format(date);
+  if (imported || windowKey === "all") return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "2-digit" }).format(date);
   if (windowKey === "week") return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", day: windowKey === "day" ? "numeric" : undefined, month: windowKey === "day" ? "short" : undefined }).format(date);
 }
@@ -145,7 +146,7 @@ function latest(points: AccountMetricPoint[]): AccountMetricPoint | null { retur
 function first(points: AccountMetricPoint[]): AccountMetricPoint | null { return points[0] ?? null; }
 
 export function AccountMetricTrendCard() {
-  const [windowKey, setWindowKey] = useState<WindowKey>("day");
+  const [windowKey, setWindowKey] = useState<WindowKey>("all");
   const [metricKey, setMetricKey] = useState<MetricKey>("totalKarma");
   const [state, setState] = useState<LoadState>("idle");
   const [history, setHistory] = useState<AccountMetricHistory | null>(null);
@@ -233,7 +234,7 @@ export function AccountMetricTrendCard() {
         <div>
           <span className="ui-eyebrow">Account trend</span>
           <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Karma, followers and imported history</h2>
-          <p className={mutedClass}>Observed Reddit account karma/followers come from scheduled extension scans. Imported HTML snapshots power the backfilled score options.</p>
+          <p className={mutedClass}>Imported profile HTML creates dated account points for karma and followers. Scheduled extension scans continue the same graph going forward.</p>
         </div>
         <div className="flex flex-wrap gap-2">
           {!isBackfilled ? (
@@ -247,11 +248,11 @@ export function AccountMetricTrendCard() {
         </div>
       </div>
 
-      {isBackfilled ? <p className="mb-4 rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]"><strong className="text-[var(--text)]">Backfilled score is not official Reddit account karma.</strong> It is a content-score estimate built from imported snapshots, post dates, comment dates, and later observed deltas. Followers remain scan-only unless we add a follower parser from profile snapshots.</p> : null}
+      {isBackfilled ? <p className="mb-4 rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]"><strong className="text-[var(--text)]">Backfilled score is not official Reddit account karma.</strong> It is a content-score estimate built from imported snapshots, post dates, comment dates, and later observed deltas. For actual karma/followers, use Total karma, Link karma, Comment karma, or Followers.</p> : null}
 
       {state === "error" ? <p className="text-[var(--issue)]">{error}</p> : null}
       {state === "loading" ? <p className={mutedClass}>Loading account history…</p> : null}
-      {state === "loaded" && !isBackfilled && points.length === 0 ? <p className={mutedClass}>No scheduled profile metric points yet. Keep the dashboard open with the extension ready and the chart will fill in over time.</p> : null}
+      {state === "loaded" && !isBackfilled && points.length === 0 ? <p className={mutedClass}>No account metric points yet. Import a dated profile HTML snapshot or run the extension scan.</p> : null}
       {state === "loaded" && isBackfilled && chartData.points.length === 0 ? <p className={mutedClass}>No imported historical score points yet. Import dated Reddit HTML/TXT snapshots from History Import.</p> : null}
       {state === "loaded" && chartData.points.length === 0 && !isBackfilled ? <p className={mutedClass}>No {metric.label.toLowerCase()} points found in this window yet.</p> : null}
 
@@ -276,7 +277,7 @@ export function AccountMetricTrendCard() {
           </div>
           <div className="grid gap-3 content-start">
             <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Total karma</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{compactNumber(current?.totalKarma ?? 0)}</strong><small className={karmaDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(karmaDelta)} in observed window</small></div>
-            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Followers</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{current?.followerCount === null || current?.followerCount === undefined ? "N/A" : compactNumber(current.followerCount)}</strong>{followerDelta === null ? <small className="text-[var(--text-muted)]">Follower count is scan-only for now.</small> : <small className={followerDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(followerDelta)} in observed window</small>}</div>
+            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Followers</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{current?.followerCount === null || current?.followerCount === undefined ? "N/A" : compactNumber(current.followerCount)}</strong>{followerDelta === null ? <small className="text-[var(--text-muted)]">Import HTML or run scan to populate followers.</small> : <small className={followerDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(followerDelta)} in observed window</small>}</div>
             <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Backfilled score</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{importedLatest === null ? "N/A" : compactNumber(importedLatest)}</strong><small className={importedDelta === null || importedDelta >= 0 ? "text-[var(--text-muted)]" : "text-[var(--issue)]"}>{importedDelta === null ? "Import snapshots to populate." : `${formatDelta(importedDelta)} across imported history`}</small></div>
           </div>
         </div>
