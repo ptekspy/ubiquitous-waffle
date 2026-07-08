@@ -1,12 +1,11 @@
 import type { FormEvent } from "react";
 
 import { EXTENSION_STORE_URL } from "@/lib/extension/constants";
-import { captureStepState, extensionLabel, extensionStepState, usernameStepState } from "@/lib/extension/status";
-import type { ExtensionState, StepState } from "@/lib/extension/types";
-import { bridgeDotClass, bridgeStateClass, cardClass, eyebrowClass, inputClass, mutedClass, primaryButtonClass } from "@/lib/ui/styles";
+import { extensionLabel } from "@/lib/extension/status";
+import type { ExtensionState } from "@/lib/extension/types";
+import { bridgeDotClass, bridgeStateClass, inputClass, mutedClass, primaryButtonClass } from "@/lib/ui/styles";
 import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
 import { normaliseRedditUsername } from "@/utils/normalise-reddit-username";
-import { JourneyStep } from "./journey-step";
 
 export type ScanSetupCardProps = {
   username: string;
@@ -26,7 +25,6 @@ export function ScanSetupCard({ username, setUsername, extensionState, extension
   const hasValidUsername = isValidRedditUsername(normalisedUsername);
   const extensionReady = extensionState === "installed";
   const canScan = extensionReady && hasValidUsername && !loading;
-  const reviewStepState: StepState = hasData ? "done" : "todo";
 
   function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -34,40 +32,43 @@ export function ScanSetupCard({ username, setUsername, extensionState, extension
   }
 
   return (
-    <section className={`${cardClass} mb-[18px] grid gap-[22px] p-[22px] lg:grid-cols-[minmax(0,1fr)_minmax(300px,390px)]`}>
-      <div>
-        <span className={eyebrowClass}>Workspace scanner</span>
-        <h2 className="my-2.5 text-[clamp(1.8rem,4vw,3rem)] leading-none font-black tracking-[-0.05em]">{hasData ? "Refresh your analytics dashboard." : "Connect your Reddit account signal."}</h2>
-        <p className={`${mutedClass} mb-[18px] max-w-3xl leading-relaxed`}>Set your Reddit username once. PaidPolitely remembers it, reloads your latest saved dashboard, and only scans again when you ask for a refresh.</p>
-        <div className={`grid items-center gap-3 rounded-[22px] border p-3.5 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${bridgeStateClass(extensionState)}`}>
-          <span className={`size-3.5 rounded-full ${bridgeDotClass(extensionState)}`} />
-          <div>
-            <strong className="block">{extensionLabel(extensionState, extensionVersion)}</strong>
-            <small className="mt-1 block leading-snug text-[#c9adbd]">{extensionMessage}</small>
+    <section className="scan-command mb-4 rounded-[22px] p-4">
+      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(300px,420px)]">
+        <form onSubmit={submit}>
+          <label className="mb-2 block text-sm font-black text-[var(--text-muted)]" htmlFor="username">
+            Reddit username
+          </label>
+          <div className="grid gap-2 sm:grid-cols-[minmax(0,1fr)_auto]">
+            <input className={inputClass} id="username" name="username" placeholder="u/example or account URL" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" />
+            <button className={primaryButtonClass} disabled={!canScan} type="submit">
+              {extensionState === "scanning" || loading ? "Refreshing..." : normalisedUsername ? `${hasData ? "Refresh" : "Scan"} u/${normalisedUsername}` : "Scan account"}
+            </button>
           </div>
-          <button className={`${primaryButtonClass} min-h-10 px-3.5`} type="button" onClick={onCheck} disabled={extensionState === "checking" || extensionState === "scanning"}>{extensionState === "checking" ? "Checking..." : "Recheck"}</button>
+          <div className="mt-3 flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between">
+            <span className={mutedClass}>{hasValidUsername ? `u/${normalisedUsername} will be saved to this workspace.` : "Enter the username once; future reloads will use it automatically."}</span>
+            <button className="border-0 bg-transparent p-0 text-sm font-black text-[var(--accent-strong)] underline decoration-[var(--border-strong)] underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={onTryPublicJson} disabled={!hasValidUsername || loading}>
+              Try server-side JSON
+            </button>
+          </div>
+        </form>
+
+        <div className={`grid items-center gap-3 rounded-[18px] p-3 sm:grid-cols-[auto_minmax(0,1fr)_auto] ${bridgeStateClass(extensionState)}`}>
+          <span className={bridgeDotClass(extensionState)} />
+          <div>
+            <strong className="block text-[var(--text)]">{extensionLabel(extensionState, extensionVersion)}</strong>
+            <small className="mt-1 block leading-snug text-[var(--text-muted)]">{extensionMessage}</small>
+          </div>
+          <button className="button-secondary min-h-10 px-3" type="button" onClick={onCheck} disabled={extensionState === "checking" || extensionState === "scanning"}>
+            {extensionState === "checking" ? "Checking..." : "Recheck"}
+          </button>
         </div>
       </div>
 
-      <ol className="grid content-start gap-2.5 p-0">
-        <JourneyStep number={1} title="Session" body="Sign in and keep this as your workspace." state="done" />
-        <JourneyStep number={2} title="Username" body="Saved once, reused on every reload." state={usernameStepState(hasValidUsername, extensionReady)} />
-        <JourneyStep number={3} title="Refresh" body="Run no-tab JSON, then quiet-tab fallback." state={captureStepState(extensionState, loading, hasData, canScan)} />
-        <JourneyStep number={4} title="Dashboard" body="Persisted subreddit, timing, and format analytics." state={reviewStepState} />
-      </ol>
-
-      <form className="rounded-3xl border border-white/12 bg-black/15 p-4 lg:col-span-2" onSubmit={submit}>
-        <label className="mb-2 block text-sm font-extrabold text-[#c9adbd]" htmlFor="username">Default Reddit username</label>
-        <div className="grid gap-2.5 sm:grid-cols-[minmax(0,1fr)_auto]">
-          <input className={inputClass} id="username" name="username" placeholder="u/example or account URL" value={username} onChange={(event) => setUsername(event.target.value)} autoComplete="off" />
-          <button className={primaryButtonClass} disabled={!canScan} type="submit">{extensionState === "scanning" || loading ? "Refreshing..." : normalisedUsername ? `${hasData ? "Refresh" : "Scan"} u/${normalisedUsername}` : "Scan account"}</button>
-        </div>
-        <div className="mt-2.5 flex flex-col gap-2.5 sm:flex-row sm:items-center sm:justify-between">
-          <small className="text-[#c9adbd]">{hasValidUsername ? `u/${normalisedUsername} will be saved to this workspace.` : "Enter the Reddit username once; future reloads will use it automatically."}</small>
-          <button className="border-0 bg-transparent p-0 font-extrabold text-[#ffe6f0] underline decoration-white/25 underline-offset-4 disabled:cursor-not-allowed disabled:opacity-60" type="button" onClick={onTryPublicJson} disabled={!hasValidUsername || loading}>Try server-side JSON instead</button>
-        </div>
-        {EXTENSION_STORE_URL ? <a className={`${primaryButtonClass} mt-3 inline-flex w-fit items-center justify-center no-underline`} href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">Install extension</a> : null}
-      </form>
+      {EXTENSION_STORE_URL ? (
+        <a className="button-secondary mt-3 inline-flex w-fit items-center justify-center no-underline" href={EXTENSION_STORE_URL} target="_blank" rel="noreferrer">
+          Install extension
+        </a>
+      ) : null}
     </section>
   );
 }
