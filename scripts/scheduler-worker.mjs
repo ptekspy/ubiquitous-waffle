@@ -22,6 +22,10 @@ function errorTickMs() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ERROR_TICK_MS;
 }
 
+function profileSchedulerEnabled() {
+  return process.env.SCHEDULER_PROFILE_SERVER_SCAN !== "0";
+}
+
 function headers() {
   const secret = process.env.SCHEDULER_WORKER_SECRET?.trim() || process.env.CRAWLER_WORKER_SECRET?.trim() || process.env.PLANNER_WORKER_SECRET?.trim();
   return secret ? { Authorization: `Bearer ${secret}` } : {};
@@ -55,9 +59,13 @@ async function postJson(path) {
 }
 
 async function runProfileScanTick() {
+  if (!profileSchedulerEnabled()) return;
+
   const result = await postJson("/api/scheduler/profile/process");
   if (result?.processed) {
     log(`Profile scan saved for u/${result.username}`, { scanId: result.scanId, profilePoints: result.profilePoints });
+  } else if (result?.browserRequired) {
+    log(result.reason || "Server profile scan needs the browser extension. Keep the dashboard open for browser-assisted scans.");
   } else {
     log(result?.reason || "No profile scan due.");
   }
