@@ -42,15 +42,22 @@ async function deepDiveRedditPost(redditId) {
 
   const post = toDeepDivePost(postChild.data);
   const comments = flattenDeepDiveComments(result.data?.[1]?.data?.children || [], post.subreddit);
+  const insights = await scrapeRedditPostInsights(post.permalink).catch((error) => ({
+    viewCount: null,
+    shareCount: null,
+    source: "reddit-post-page-error",
+    raw: { error: error?.message || "Post insight scrape failed." },
+  }));
 
   return {
     ok: true,
     status: "captured_post_deep_dive",
     payload: {
-      source: "paidpolitely-reddit-extension-post-deep-dive-v1",
+      source: "paidpolitely-reddit-extension-post-deep-dive-v2",
       capturedAt: new Date().toISOString(),
       post,
       comments,
+      insights,
       rawCommentCount: Array.isArray(result.data?.[1]?.data?.children) ? result.data[1].data.children.length : 0,
     },
   };
@@ -73,6 +80,102 @@ function toDeepDivePost(data) {
     isSelf: Boolean(data.is_self),
     domain: typeof data.domain === "string" ? data.domain : null,
     postHint: typeof data.post_hint === "string" ? data.post_hint : null,
+  };
+}
+
+async function scrapeRedditPostInsights(permalink) {
+  const tab = await chrome.tabs.create({ url: permalink, active: false });
+
+  try {
+    await waitForTabLoad(tab.id);
+    await delay(2600);
+    const result = await runInTab(tab.id, scrapePostInsightsInPage, []);
+
+    return {
+      viewCount: typeof result?.viewCount === "number" ? result.viewCount : null,
+      shareCount: typeof result?.shareCount === "number" ? result.shareCount : null,
+      source: result?.source || "reddit-post-page",
+      raw: {
+        url: permalink,
+        capturedAt: new Date().toISOString(),
+        visible: Boolean(result?.visible),
+        labels: Array.isArray(result?.labels) ? result.labels.slice(0, 80) : [],
+        insightText: typeof result?.insightText === "string" ? result.insightText.slice(0, 6000) : "",
+        error: result?.error || null,
+      },
+    };
+  } finally {
+    if (tab?.id) await chrome.tabs.remove(tab.id).catch(() => undefined);
+  }
+}
+
+function scrapePostInsightsInPage() {
+  const numberFrom = (value) => {
+    const token = String(value ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/,/g, "")
+      .match(/-?\d+(?:\.\d+)?\s*[kmb]?/)?.[0]
+      ?.replace(/\s/g, "");
+    if (!token) return null;
+    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : token.endsWith("b") ? 1000000000 : 1;
+    const parsed = parseFloat(token);
+    return Number.isFinite(parsed) ? Math.round(parsed * multiplier) : null;
+  };
+
+  const compact = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const bodyText = compact(document.body?.innerText || "");
+  const lower = bodyText.toLowerCase();
+
+  const likelyInsightNodes = [...document.querySelectorAll("section, aside, shreddit-post, faceplate-tracker, div, span, p")]
+    .map((node) => compact(node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || ""))
+    .filter((text) => /views?|post insights?|insights?|upvote rate|shares?|total views?/i.test(text))
+    .filter((text, index, arr) => text.length > 0 && text.length < 1400 && arr.indexOf(text) === index)
+    .slice(0, 80);
+
+  const insightText = compact(likelyInsightNodes.join("\n"));
+  const searchText = insightText || bodyText;
+  const labels = searchText.split(/\n| • | \| /).map(compact).filter(Boolean).slice(0, 100);
+
+  const patterns = [
+    { key: "viewCount", regexes: [/(\d[\d,.]*\s*[kmb]?)\s+(?:total\s+)?views?/i, /(?:total\s+)?views?\s+(\d[\d,.]*\s*[kmb]?)/i, /post\s+views?\s+(\d[\d,.]*\s*[kmb]?)/i] },
+    { key: "shareCount", regexes: [/(\d[\d,.]*\s*[kmb]?)\s+shares?/i, /shares?\s+(\d[\d,.]*\s*[kmb]?)/i] },
+  ];
+
+  const output = { viewCount: null, shareCount: null };
+
+  for (const pattern of patterns) {
+    for (const regex of pattern.regexes) {
+      const match = searchText.match(regex);
+      const value = match ? numberFrom(match[1]) : null;
+      if (value !== null) {
+        output[pattern.key] = value;
+        break;
+      }
+    }
+  }
+
+  // Fallback: look for a small visual card where the label and value are split across sibling nodes.
+  const allTextNodes = [...document.querySelectorAll("span, p, div, h1, h2, h3, h4")]
+    .map((node) => compact(node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || ""))
+    .filter(Boolean)
+    .slice(0, 2000);
+
+  for (let index = 0; index < allTextNodes.length; index += 1) {
+    const text = allTextNodes[index];
+    const previous = allTextNodes[index - 1] || "";
+    const next = allTextNodes[index + 1] || "";
+    if (output.viewCount === null && /^views?$/i.test(text)) output.viewCount = numberFrom(previous) ?? numberFrom(next);
+    if (output.shareCount === null && /^shares?$/i.test(text)) output.shareCount = numberFrom(previous) ?? numberFrom(next);
+  }
+
+  return {
+    ...output,
+    visible: /views?|post insights?|insights?|upvote rate|shares?/i.test(lower),
+    source: "reddit-post-page",
+    labels,
+    insightText,
+    error: output.viewCount === null && output.shareCount === null ? "No visible view/share insight values were found on the post page." : null,
   };
 }
 
