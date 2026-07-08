@@ -3,6 +3,7 @@ import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
 import { formatDate } from "@/utils/format-date";
 import { numberFormat } from "@/utils/number-format";
+import { AccountMetricTrendCard } from "./account-metric-trend-card";
 import { ContentTypeList } from "./content-type-list";
 import { DashboardHealthCard } from "./dashboard-health-card";
 import { PanelHeading } from "./panel-heading";
@@ -23,6 +24,7 @@ export function Dashboard({ data }: DashboardProps) {
     <section className="grid gap-4">
       <WarningCard warnings={data.warnings} />
       <DashboardHealthCard analytics={data.analytics} />
+      <AccountMetricTrendCard />
       <PlannerCard initialJob={data.plannerJob} />
 
       <section className={`${cardClass} flex items-center justify-between gap-5 p-5 max-sm:flex-col max-sm:items-stretch`}>
