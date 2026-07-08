@@ -1,19 +1,7 @@
 import { prisma } from "@/lib/db/prisma";
 
-export type DareLevelKey =
-  | "beginner"
-  | "adventurous"
-  | "daring"
-  | "bold"
-  | "risque"
-  | "exhibitionist"
-  | "daredevil"
-  | "thrill_seeker"
-  | "legendary"
-  | "extreme"
-  | "mythical"
-  | "ultimate"
-  | "legendary_challenges";
+export type DareLevelKey = "beginner" | "adventurous" | "daring" | "bold" | "risque" | "exhibitionist" | "daredevil" | "thrill_seeker" | "legendary" | "extreme" | "mythical" | "ultimate" | "legendary_challenges";
+export type DareStatus = "PENDING" | "VERIFIED" | "REJECTED" | "NOT_STARTED";
 
 export type DareTemplate = {
   slug: string;
@@ -24,24 +12,6 @@ export type DareTemplate = {
   order: number;
   keywords: string[];
   requirements: string[];
-};
-
-export type DareTrackerResponse = {
-  generatedAt: string;
-  account: { id: string; username: string } | null;
-  summary: {
-    detected: number;
-    pending: number;
-    verified: number;
-    rejected: number;
-    playbook: number;
-    community: number;
-    completionPercent: number;
-  };
-  levels: Array<{ level: DareLevelKey; label: string; total: number; verified: number; pending: number; completionPercent: number }>;
-  catalogue: Array<DareTemplate & { status: "PENDING" | "VERIFIED" | "REJECTED" | "NOT_STARTED"; completionId: string | null; postPermalink: string | null }>;
-  pending: DareCompletionRow[];
-  recent: DareCompletionRow[];
 };
 
 export type DareCompletionRow = {
@@ -55,13 +25,17 @@ export type DareCompletionRow = {
   darerUsername: string | null;
   confidence: number;
   detectedAt: string;
-  post: {
-    title: string;
-    subreddit: string;
-    permalink: string;
-    score: number;
-    comments: number;
-  };
+  post: { title: string; subreddit: string; permalink: string; score: number; comments: number };
+};
+
+export type DareTrackerResponse = {
+  generatedAt: string;
+  account: { id: string; username: string } | null;
+  summary: { detected: number; pending: number; verified: number; rejected: number; playbook: number; community: number; completionPercent: number };
+  levels: Array<{ level: DareLevelKey; label: string; total: number; verified: number; pending: number; completionPercent: number }>;
+  catalogue: Array<DareTemplate & { status: DareStatus; completionId: string | null; postPermalink: string | null }>;
+  pending: DareCompletionRow[];
+  recent: DareCompletionRow[];
 };
 
 const LEVEL_LABELS: Record<DareLevelKey, string> = {
@@ -80,52 +54,56 @@ const LEVEL_LABELS: Record<DareLevelKey, string> = {
   legendary_challenges: "Legendary Challenges",
 };
 
+function dare(slug: string, name: string, emoji: string, level: DareLevelKey, levelOrder: number, order: number, keywords: string[], requirements: string[] = []): DareTemplate {
+  return { slug, name, emoji, level, levelOrder, order, keywords, requirements };
+}
+
 export const DARE_TEMPLATES: DareTemplate[] = [
-  { slug: "hands-bra", name: "Hands Bra", emoji: "👐", level: "beginner", levelOrder: 1, order: 1, keywords: ["hands bra", "hand bra"], requirements: ["Camera/photo", "Private setting"] },
-  { slug: "one-finger-challenge", name: "One Finger Challenge", emoji: "👆", level: "beginner", levelOrder: 1, order: 2, keywords: ["one finger challenge", "1 finger challenge"], requirements: ["Camera/photo", "Private setting"] },
-  { slug: "heartboob", name: "Heartboob", emoji: "❤️", level: "beginner", levelOrder: 1, order: 3, keywords: ["heartboob", "heart boob"], requirements: ["Camera/photo"] },
-  { slug: "on-off", name: "On/Off", emoji: "🔄", level: "beginner", levelOrder: 1, order: 4, keywords: ["on off", "on/off"], requirements: ["Camera/photo", "Matching poses"] },
-  { slug: "the-arsenal", name: "The Arsenal", emoji: "🧰", level: "beginner", levelOrder: 1, order: 5, keywords: ["the arsenal", "arsenal"], requirements: ["Props/items"] },
-  { slug: "the-music-video", name: "The Music Video", emoji: "🎵", level: "beginner", levelOrder: 1, order: 6, keywords: ["music video", "lip sync", "lipsync"], requirements: ["Video/audio"] },
-  { slug: "the-thunder-tease", name: "The Thunder Tease", emoji: "🌧️", level: "adventurous", levelOrder: 2, order: 1, keywords: ["thunder tease", "thunderstorm", "lightning"], requirements: ["Weather/season", "Window"] },
-  { slug: "human-canvas", name: "Human Canvas", emoji: "✍️", level: "adventurous", levelOrder: 2, order: 2, keywords: ["human canvas", "body writing"], requirements: ["Props/items"] },
-  { slug: "the-confessional", name: "The Confessional", emoji: "📖", level: "adventurous", levelOrder: 2, order: 3, keywords: ["the confessional", "confessional"], requirements: ["Online/platform"] },
-  { slug: "wilson", name: "Wilson!", emoji: "🏐", level: "adventurous", levelOrder: 2, order: 4, keywords: ["wilson", "handprints", "hand prints"], requirements: ["Camera/photo"] },
-  { slug: "ice-queen", name: "Ice Queen", emoji: "❄️", level: "adventurous", levelOrder: 2, order: 5, keywords: ["ice queen", "ice cubes", "ice cube"], requirements: ["Weather/season", "Safety plan"] },
-  { slug: "the-classic-flash", name: "The Classic Flash", emoji: "👗", level: "adventurous", levelOrder: 2, order: 6, keywords: ["classic flash", "changing room", "fitting room"], requirements: ["Public/semi-public", "Changing room"] },
-  { slug: "the-peek-a-boo", name: "The Peek-a-Boo", emoji: "🔍", level: "adventurous", levelOrder: 2, order: 7, keywords: ["peek a boo", "peek-a-boo", "keyhole", "blinds"], requirements: ["Camera/photo"] },
-  { slug: "morning-brew-and-boobs", name: "Morning Brew", emoji: "☕", level: "daring", levelOrder: 3, order: 1, keywords: ["morning brew", "coffee", "tea"], requirements: ["Props/items"] },
-  { slug: "gym-slut", name: "Gym Dare", emoji: "💪", level: "daring", levelOrder: 3, order: 2, keywords: ["gym dare", "gym", "workout"], requirements: ["Exercise setting"] },
-  { slug: "naked-chief", name: "Kitchen Dare", emoji: "👩‍🍳", level: "daring", levelOrder: 3, order: 3, keywords: ["naked chief", "naked chef", "kitchen dare", "cooking"], requirements: ["Kitchen", "Safety plan"] },
-  { slug: "winnie-the-pooh", name: "Winnie the Pooh", emoji: "🐻", level: "bold", levelOrder: 4, order: 1, keywords: ["winnie the pooh", "pooh"], requirements: ["Outfit", "Outdoor"] },
-  { slug: "the-mall-commando", name: "Mall Commando", emoji: "👗", level: "bold", levelOrder: 4, order: 2, keywords: ["mall commando", "mall"], requirements: ["Mall/store", "Outfit"] },
-  { slug: "the-self-admirer", name: "The Self-Admirer", emoji: "📱", level: "bold", levelOrder: 4, order: 3, keywords: ["self admirer", "phone wallpaper", "wallpaper"], requirements: ["Duration/timing", "Phone"] },
-  { slug: "the-strip-queen", name: "The Strip Queen", emoji: "💃", level: "bold", levelOrder: 4, order: 4, keywords: ["strip queen", "striptease"], requirements: ["Video/audio"] },
-  { slug: "the-librarian", name: "The Librarian", emoji: "📚", level: "risque", levelOrder: 5, order: 1, keywords: ["librarian", "bookstore"], requirements: ["Bookstore"] },
-  { slug: "the-garden-of-eden", name: "The Garden of Eden", emoji: "🍎", level: "risque", levelOrder: 5, order: 2, keywords: ["garden of eden", "eden"], requirements: ["Props/items", "Outdoor"] },
-  { slug: "the-melting-moment", name: "The Melting Moment", emoji: "🍦", level: "risque", levelOrder: 5, order: 3, keywords: ["melting moment", "ice cream", "popsicle"], requirements: ["Weather/season", "Props/items"] },
-  { slug: "the-pinup-girl", name: "The Pinup Girl", emoji: "📷", level: "risque", levelOrder: 5, order: 4, keywords: ["pinup", "pin-up", "pinup girl"], requirements: ["Camera/photo"] },
-  { slug: "the-door-dare", name: "The Door Dare", emoji: "🚪", level: "risque", levelOrder: 5, order: 5, keywords: ["door dare", "front door"], requirements: ["Door/window"] },
-  { slug: "the-wild-flasher", name: "The Wild Flasher", emoji: "🌲", level: "exhibitionist", levelOrder: 6, order: 1, keywords: ["wild flasher", "outdoors", "outdoor"], requirements: ["Outdoor/nature"] },
-  { slug: "the-anything-but-clothes", name: "Anything But Clothes", emoji: "🎭", level: "exhibitionist", levelOrder: 6, order: 2, keywords: ["anything but clothes", "abc challenge"], requirements: ["Outfit", "Props/items"] },
-  { slug: "the-sun-worshipper", name: "The Sun Worshipper", emoji: "☀️", level: "daredevil", levelOrder: 7, order: 1, keywords: ["sun worshipper", "sun worshiper", "tanning"], requirements: ["Weather/season"] },
-  { slug: "the-rope-bunny", name: "The Rope Bunny", emoji: "🪢", level: "daredevil", levelOrder: 7, order: 2, keywords: ["rope bunny", "rope"], requirements: ["Props/items", "Safety plan"] },
-  { slug: "the-dice-slut", name: "Dice Dare", emoji: "🎲", level: "daredevil", levelOrder: 7, order: 3, keywords: ["dice dare", "dice"], requirements: ["Props/items", "Duration/timing"] },
-  { slug: "the-road-flasher", name: "Road Dare", emoji: "🚗", level: "daredevil", levelOrder: 7, order: 4, keywords: ["road dare", "road flash", "car road"], requirements: ["Vehicle/transport"] },
-  { slug: "the-webcam-hunt", name: "The Webcam Hunt", emoji: "📹", level: "thrill_seeker", levelOrder: 8, order: 1, keywords: ["webcam hunt", "webcam"], requirements: ["Online/platform", "Video/audio"] },
-  { slug: "the-bar-flasher", name: "The Bar Flasher", emoji: "🍸", level: "thrill_seeker", levelOrder: 8, order: 2, keywords: ["bar flasher", "bar dare"], requirements: ["Bar/restaurant"] },
-  { slug: "the-thrill-ride", name: "The Thrill Ride", emoji: "🎢", level: "thrill_seeker", levelOrder: 8, order: 3, keywords: ["thrill ride", "roller coaster"], requirements: ["Ride", "Public/semi-public"] },
-  { slug: "the-wine-tasting", name: "The Wine Tasting", emoji: "🍷", level: "legendary", levelOrder: 9, order: 1, keywords: ["wine tasting", "wine"], requirements: ["Props/items"] },
-  { slug: "the-marilyn-moment", name: "The Marilyn Moment", emoji: "🌬️", level: "legendary", levelOrder: 9, order: 2, keywords: ["marilyn moment", "marilyn"], requirements: ["Weather/season", "Outfit"] },
-  { slug: "the-water-nymph", name: "The Water Nymph", emoji: "🌊", level: "legendary", levelOrder: 9, order: 3, keywords: ["water nymph", "water"], requirements: ["Water", "Safety plan"] },
-  { slug: "the-hotel-exhibitionist", name: "Hotel Dare", emoji: "🏨", level: "mythical", levelOrder: 11, order: 1, keywords: ["hotel dare", "hotel"], requirements: ["Hotel"] },
-  { slug: "laundry-day", name: "Laundry Day", emoji: "🧺", level: "ultimate", levelOrder: 12, order: 1, keywords: ["laundry day", "laundromat"], requirements: ["Laundromat"] },
-  { slug: "the-elevator-stripper", name: "Elevator Dare", emoji: "🛗", level: "legendary_challenges", levelOrder: 13, order: 1, keywords: ["elevator dare", "elevator"], requirements: ["Elevator/stairwell", "Timing"] },
-  { slug: "the-stairway-to-heaven", name: "Stairway Dare", emoji: "🪜", level: "legendary_challenges", levelOrder: 13, order: 2, keywords: ["stairway to heaven", "stairway", "stairwell"], requirements: ["Elevator/stairwell"] },
-  { slug: "the-snowblower", name: "Snowblower", emoji: "❄️", level: "legendary_challenges", levelOrder: 13, order: 3, keywords: ["snowblower", "snow blower"], requirements: ["Weather/season", "Safety plan"] },
+  dare("hands-bra", "Hands Bra", "👐", "beginner", 1, 1, ["hands bra", "hand bra"], ["Camera/photo"]),
+  dare("one-finger-challenge", "One Finger Challenge", "👆", "beginner", 1, 2, ["one finger challenge", "1 finger challenge"], ["Camera/photo"]),
+  dare("heartboob", "Heartboob", "❤️", "beginner", 1, 3, ["heartboob", "heart boob"], ["Camera/photo"]),
+  dare("on-off", "On/Off", "🔄", "beginner", 1, 4, ["on off", "on/off"], ["Matching poses"]),
+  dare("the-arsenal", "The Arsenal", "🧰", "beginner", 1, 5, ["the arsenal", "arsenal"], ["Props/items"]),
+  dare("the-music-video", "The Music Video", "🎵", "beginner", 1, 6, ["music video", "lip sync", "lipsync"], ["Video/audio"]),
+  dare("the-thunder-tease", "The Thunder Tease", "🌧️", "adventurous", 2, 1, ["thunder tease", "thunderstorm", "lightning"], ["Weather/season"]),
+  dare("human-canvas", "Human Canvas", "✍️", "adventurous", 2, 2, ["human canvas", "body writing"], ["Props/items"]),
+  dare("the-confessional", "The Confessional", "📖", "adventurous", 2, 3, ["the confessional", "confessional"], ["Online/platform"]),
+  dare("wilson", "Wilson!", "🏐", "adventurous", 2, 4, ["wilson", "handprints", "hand prints"], ["Camera/photo"]),
+  dare("ice-queen", "Ice Queen", "❄️", "adventurous", 2, 5, ["ice queen", "ice cubes", "ice cube"], ["Weather/season", "Safety plan"]),
+  dare("the-classic-flash", "The Classic Flash", "👗", "adventurous", 2, 6, ["classic flash", "changing room", "fitting room"], ["Changing room"]),
+  dare("the-peek-a-boo", "The Peek-a-Boo", "🔍", "adventurous", 2, 7, ["peek a boo", "peek-a-boo", "keyhole", "blinds"], ["Camera/photo"]),
+  dare("morning-brew-and-boobs", "Morning Brew", "☕", "daring", 3, 1, ["morning brew", "coffee", "tea"], ["Props/items"]),
+  dare("gym-slut", "Gym Dare", "💪", "daring", 3, 2, ["gym dare", "gym", "workout"], ["Exercise setting"]),
+  dare("naked-chief", "Kitchen Dare", "👩‍🍳", "daring", 3, 3, ["naked chief", "naked chef", "kitchen dare", "cooking"], ["Kitchen"]),
+  dare("winnie-the-pooh", "Winnie the Pooh", "🐻", "bold", 4, 1, ["winnie the pooh", "pooh"], ["Outfit"]),
+  dare("the-mall-commando", "Mall Commando", "👗", "bold", 4, 2, ["mall commando", "mall"], ["Mall/store"]),
+  dare("the-self-admirer", "The Self-Admirer", "📱", "bold", 4, 3, ["self admirer", "phone wallpaper", "wallpaper"], ["Duration/timing"]),
+  dare("the-strip-queen", "The Strip Queen", "💃", "bold", 4, 4, ["strip queen", "striptease"], ["Video/audio"]),
+  dare("the-librarian", "The Librarian", "📚", "risque", 5, 1, ["librarian", "bookstore"], ["Bookstore"]),
+  dare("the-garden-of-eden", "The Garden of Eden", "🍎", "risque", 5, 2, ["garden of eden", "eden"], ["Props/items"]),
+  dare("the-melting-moment", "The Melting Moment", "🍦", "risque", 5, 3, ["melting moment", "ice cream", "popsicle"], ["Weather/season"]),
+  dare("the-pinup-girl", "The Pinup Girl", "📷", "risque", 5, 4, ["pinup", "pin-up", "pinup girl"], ["Camera/photo"]),
+  dare("the-door-dare", "The Door Dare", "🚪", "risque", 5, 5, ["door dare", "front door"], ["Door/window"]),
+  dare("the-wild-flasher", "The Wild Flasher", "🌲", "exhibitionist", 6, 1, ["wild flasher", "outdoors", "outdoor"], ["Outdoor/nature"]),
+  dare("the-anything-but-clothes", "Anything But Clothes", "🎭", "exhibitionist", 6, 2, ["anything but clothes", "abc challenge"], ["Props/items"]),
+  dare("the-sun-worshipper", "The Sun Worshipper", "☀️", "daredevil", 7, 1, ["sun worshipper", "sun worshiper", "tanning"], ["Weather/season"]),
+  dare("the-rope-bunny", "The Rope Bunny", "🪢", "daredevil", 7, 2, ["rope bunny", "rope"], ["Safety plan"]),
+  dare("the-dice-slut", "Dice Dare", "🎲", "daredevil", 7, 3, ["dice dare", "dice"], ["Duration/timing"]),
+  dare("the-road-flasher", "Road Dare", "🚗", "daredevil", 7, 4, ["road dare", "road flash", "car road"], ["Vehicle/transport"]),
+  dare("the-webcam-hunt", "The Webcam Hunt", "📹", "thrill_seeker", 8, 1, ["webcam hunt", "webcam"], ["Online/platform"]),
+  dare("the-bar-flasher", "The Bar Flasher", "🍸", "thrill_seeker", 8, 2, ["bar flasher", "bar dare"], ["Bar/restaurant"]),
+  dare("the-thrill-ride", "The Thrill Ride", "🎢", "thrill_seeker", 8, 3, ["thrill ride", "roller coaster"], ["Ride"]),
+  dare("the-wine-tasting", "The Wine Tasting", "🍷", "legendary", 9, 1, ["wine tasting", "wine"], ["Props/items"]),
+  dare("the-marilyn-moment", "The Marilyn Moment", "🌬️", "legendary", 9, 2, ["marilyn moment", "marilyn"], ["Weather/season"]),
+  dare("the-water-nymph", "The Water Nymph", "🌊", "legendary", 9, 3, ["water nymph", "water"], ["Water"]),
+  dare("the-hotel-exhibitionist", "Hotel Dare", "🏨", "mythical", 11, 1, ["hotel dare", "hotel"], ["Hotel"]),
+  dare("laundry-day", "Laundry Day", "🧺", "ultimate", 12, 1, ["laundry day", "laundromat"], ["Laundromat"]),
+  dare("the-elevator-stripper", "Elevator Dare", "🛗", "legendary_challenges", 13, 1, ["elevator dare", "elevator"], ["Elevator/stairwell"]),
+  dare("the-stairway-to-heaven", "Stairway Dare", "🪜", "legendary_challenges", 13, 2, ["stairway to heaven", "stairway", "stairwell"], ["Elevator/stairwell"]),
+  dare("the-snowblower", "Snowblower", "❄️", "legendary_challenges", 13, 3, ["snowblower", "snow blower"], ["Weather/season"]),
 ];
 
-const DARE_BY_SLUG = new Map(DARE_TEMPLATES.map((dare) => [dare.slug, dare]));
+const DARE_BY_SLUG = new Map(DARE_TEMPLATES.map((item) => [item.slug, item]));
 
 function normaliseText(value: string): string {
   return value.toLowerCase().replace(/[^a-z0-9@_/ -]+/g, " ").replace(/[-_/]+/g, " ").replace(/\s+/g, " ").trim();
@@ -135,26 +113,19 @@ function normaliseUsername(value: string | null | undefined): string {
   return String(value ?? "").trim().replace(/^u\//i, "").replace(/^@/, "");
 }
 
-function titleMatchesDare(title: string, dare: DareTemplate): boolean {
+function titleMatchesDare(title: string, item: DareTemplate): boolean {
   const normalized = normaliseText(title);
-  const slugPhrase = dare.slug.replace(/-/g, " ");
-  if (normalized.includes(slugPhrase)) return true;
-  if (normalized.includes(normaliseText(dare.name))) return true;
-  return dare.keywords.some((keyword) => normalized.includes(normaliseText(keyword)));
+  if (normalized.includes(item.slug.replace(/-/g, " "))) return true;
+  if (normalized.includes(normaliseText(item.name))) return true;
+  return item.keywords.some((keyword) => normalized.includes(normaliseText(keyword)));
 }
 
 function communityDarerFromTitle(title: string): string | null {
-  const patterns = [
-    /(?:dared by|dare from|from|for)\s+u\/([A-Za-z0-9_-]{3,20})/i,
-    /u\/([A-Za-z0-9_-]{3,20}).{0,28}\b(?:dare|dared)\b/i,
-    /\b(?:dare|dared)\b.{0,28}u\/([A-Za-z0-9_-]{3,20})/i,
-  ];
-
+  const patterns = [/(?:dared by|dare from|from|for)\s+u\/([A-Za-z0-9_-]{3,20})/i, /u\/([A-Za-z0-9_-]{3,20}).{0,28}\b(?:dare|dared)\b/i, /\b(?:dare|dared)\b.{0,28}u\/([A-Za-z0-9_-]{3,20})/i];
   for (const pattern of patterns) {
     const match = title.match(pattern)?.[1];
     if (match) return normaliseUsername(match);
   }
-
   return null;
 }
 
@@ -162,18 +133,16 @@ function isDaresGoneWild(subreddit: string): boolean {
   return subreddit.trim().toLowerCase() === "daresgonewild";
 }
 
-function completionDedupeKey(args: { postSnapshotId: string; completionType: string; dareSlug?: string | null; darerUsername?: string | null }): string {
-  return [args.postSnapshotId, args.completionType, args.dareSlug ?? "community", args.darerUsername ?? "unknown"].join(":");
+function completionDedupeKey(input: { postSnapshotId: string; completionType: string; dareSlug?: string | null; darerUsername?: string | null }): string {
+  return [input.postSnapshotId, input.completionType, input.dareSlug ?? "community", input.darerUsername ?? "unknown"].join(":");
 }
 
 export function detectDaresForPost(post: { id: string; title: string; subreddit: string }, username: string) {
   if (!isDaresGoneWild(post.subreddit)) return [];
+  const detections: Array<{ completionType: "PLAYBOOK" | "COMMUNITY"; dareSlug: string | null; dareName: string | null; dareLevel: string | null; darerUsername: string | null; confidence: number }> = [];
 
-  const detections: Array<{ completionType: string; dareSlug: string | null; dareName: string | null; dareLevel: string | null; darerUsername: string | null; confidence: number }> = [];
-  const matched = DARE_TEMPLATES.filter((dare) => titleMatchesDare(post.title, dare));
-
-  for (const dare of matched.slice(0, 3)) {
-    detections.push({ completionType: "PLAYBOOK", dareSlug: dare.slug, dareName: dare.name, dareLevel: dare.level, darerUsername: null, confidence: 0.86 });
+  for (const item of DARE_TEMPLATES.filter((candidate) => titleMatchesDare(post.title, candidate)).slice(0, 3)) {
+    detections.push({ completionType: "PLAYBOOK", dareSlug: item.slug, dareName: item.name, dareLevel: item.level, darerUsername: null, confidence: 0.86 });
   }
 
   const darerUsername = communityDarerFromTitle(post.title);
@@ -188,149 +157,72 @@ export async function syncDareCompletionsForScan(scanId: string, accountId: stri
   const account = await prisma.redditAccount.findUnique({ where: { id: accountId }, select: { username: true } });
   if (!account) return 0;
 
-  const posts = await prisma.postSnapshot.findMany({
-    where: { scanId, subreddit: { equals: "daresgonewild", mode: "insensitive" } },
-    select: { id: true, title: true, subreddit: true, createdAt: true },
-  });
-
-  let created = 0;
+  const posts = await prisma.postSnapshot.findMany({ where: { scanId, subreddit: { equals: "daresgonewild", mode: "insensitive" } }, select: { id: true, title: true, subreddit: true, createdAt: true } });
+  let count = 0;
 
   for (const post of posts) {
-    const detections = detectDaresForPost(post, account.username);
-
-    for (const detection of detections) {
+    for (const detection of detectDaresForPost(post, account.username)) {
       const dedupeKey = completionDedupeKey({ postSnapshotId: post.id, completionType: detection.completionType, dareSlug: detection.dareSlug, darerUsername: detection.darerUsername });
       await prisma.dareCompletion.upsert({
         where: { dedupeKey },
-        create: {
-          dedupeKey,
-          ownerUserId: ownerUserId ?? null,
-          accountId,
-          scanId,
-          postSnapshotId: post.id,
-          username: account.username,
-          subreddit: post.subreddit,
-          completionType: detection.completionType,
-          dareSlug: detection.dareSlug,
-          dareName: detection.dareName,
-          dareLevel: detection.dareLevel,
-          darerUsername: detection.darerUsername,
-          confidence: detection.confidence,
-          status: "PENDING",
-          detectedAt: post.createdAt,
-        },
-        update: {
-          scanId,
-          dareName: detection.dareName,
-          dareLevel: detection.dareLevel,
-          darerUsername: detection.darerUsername,
-          confidence: detection.confidence,
-        },
+        create: { dedupeKey, ownerUserId: ownerUserId ?? null, accountId, scanId, postSnapshotId: post.id, username: account.username, subreddit: post.subreddit, completionType: detection.completionType, dareSlug: detection.dareSlug, dareName: detection.dareName, dareLevel: detection.dareLevel, darerUsername: detection.darerUsername, confidence: detection.confidence, status: "PENDING", detectedAt: post.createdAt },
+        update: { scanId, dareName: detection.dareName, dareLevel: detection.dareLevel, darerUsername: detection.darerUsername, confidence: detection.confidence },
       });
-      created += 1;
+      count += 1;
     }
   }
 
-  return created;
+  return count;
 }
 
-function toCompletionRow(row: {
-  id: string;
-  completionType: string;
-  status: string;
-  username: string;
-  dareSlug: string | null;
-  dareName: string | null;
-  dareLevel: string | null;
-  darerUsername: string | null;
-  confidence: number;
-  detectedAt: Date;
-  post: { title: string; subreddit: string; permalink: string; score: number; numComments: number; refreshedScore: number | null; refreshedNumComments: number | null };
-}): DareCompletionRow {
-  return {
-    id: row.id,
-    type: row.completionType,
-    status: row.status,
-    username: row.username,
-    dareSlug: row.dareSlug,
-    dareName: row.dareName,
-    dareLevel: row.dareLevel,
-    darerUsername: row.darerUsername,
-    confidence: row.confidence,
-    detectedAt: row.detectedAt.toISOString(),
-    post: {
-      title: row.post.title,
-      subreddit: row.post.subreddit,
-      permalink: row.post.permalink,
-      score: row.post.refreshedScore ?? row.post.score,
-      comments: row.post.refreshedNumComments ?? row.post.numComments,
-    },
-  };
+function toCompletionRow(row: { id: string; completionType: string; status: string; username: string; dareSlug: string | null; dareName: string | null; dareLevel: string | null; darerUsername: string | null; confidence: number; detectedAt: Date; post: { title: string; subreddit: string; permalink: string; score: number; numComments: number; refreshedScore: number | null; refreshedNumComments: number | null } }): DareCompletionRow {
+  return { id: row.id, type: row.completionType, status: row.status, username: row.username, dareSlug: row.dareSlug, dareName: row.dareName, dareLevel: row.dareLevel, darerUsername: row.darerUsername, confidence: row.confidence, detectedAt: row.detectedAt.toISOString(), post: { title: row.post.title, subreddit: row.post.subreddit, permalink: row.post.permalink, score: row.post.refreshedScore ?? row.post.score, comments: row.post.refreshedNumComments ?? row.post.numComments } };
+}
+
+function completionStatus(value: string | null | undefined): DareStatus {
+  return value === "PENDING" || value === "VERIFIED" || value === "REJECTED" ? value : "NOT_STARTED";
 }
 
 export async function getDareTracker(ownerUserId: string): Promise<DareTrackerResponse> {
   const account = await prisma.redditAccount.findFirst({ where: { ownerUserId }, orderBy: { updatedAt: "desc" }, select: { id: true, username: true } });
-  if (!account) {
-    return { generatedAt: new Date().toISOString(), account: null, summary: { detected: 0, pending: 0, verified: 0, rejected: 0, playbook: 0, community: 0, completionPercent: 0 }, levels: [], catalogue: [], pending: [], recent: [] };
-  }
+  if (!account) return { generatedAt: new Date().toISOString(), account: null, summary: { detected: 0, pending: 0, verified: 0, rejected: 0, playbook: 0, community: 0, completionPercent: 0 }, levels: [], catalogue: [], pending: [], recent: [] };
 
-  const completions = await prisma.dareCompletion.findMany({
-    where: { accountId: account.id },
-    orderBy: { detectedAt: "desc" },
-    include: { post: { select: { title: true, subreddit: true, permalink: true, score: true, numComments: true, refreshedScore: true, refreshedNumComments: true } } },
-  });
-
-  const verifiedBySlug = new Map(completions.filter((row) => row.completionType === "PLAYBOOK" && row.dareSlug).map((row) => [row.dareSlug as string, row]));
-  const pendingBySlug = new Map(completions.filter((row) => row.completionType === "PLAYBOOK" && row.dareSlug && row.status === "PENDING").map((row) => [row.dareSlug as string, row]));
+  const completions = await prisma.dareCompletion.findMany({ where: { accountId: account.id }, orderBy: { detectedAt: "desc" }, include: { post: { select: { title: true, subreddit: true, permalink: true, score: true, numComments: true, refreshedScore: true, refreshedNumComments: true } } } });
+  const bySlug = new Map(completions.filter((row) => row.completionType === "PLAYBOOK" && row.dareSlug).map((row) => [row.dareSlug as string, row]));
+  const verifiedSlugs = new Set(completions.filter((row) => row.status === "VERIFIED" && row.dareSlug).map((row) => row.dareSlug as string));
+  const pendingSlugs = new Set(completions.filter((row) => row.status === "PENDING" && row.dareSlug).map((row) => row.dareSlug as string));
   const verified = completions.filter((row) => row.status === "VERIFIED").length;
   const pending = completions.filter((row) => row.status === "PENDING").length;
   const rejected = completions.filter((row) => row.status === "REJECTED").length;
   const playbook = completions.filter((row) => row.completionType === "PLAYBOOK").length;
   const community = completions.filter((row) => row.completionType === "COMMUNITY").length;
-  const verifiedPlaybookSlugs = new Set(completions.filter((row) => row.status === "VERIFIED" && row.dareSlug).map((row) => row.dareSlug as string));
 
   const levels = Object.entries(LEVEL_LABELS).map(([level, label]) => {
-    const levelDares = DARE_TEMPLATES.filter((dare) => dare.level === level);
-    const levelVerified = levelDares.filter((dare) => verifiedPlaybookSlugs.has(dare.slug)).length;
-    const levelPending = levelDares.filter((dare) => pendingBySlug.has(dare.slug)).length;
-    return { level: level as DareLevelKey, label, total: levelDares.length, verified: levelVerified, pending: levelPending, completionPercent: levelDares.length === 0 ? 0 : Math.round((levelVerified / levelDares.length) * 100) };
-  }).filter((row) => row.total > 0);
+    const items = DARE_TEMPLATES.filter((item) => item.level === level);
+    const levelVerified = items.filter((item) => verifiedSlugs.has(item.slug)).length;
+    const levelPending = items.filter((item) => pendingSlugs.has(item.slug)).length;
+    return { level: level as DareLevelKey, label, total: items.length, verified: levelVerified, pending: levelPending, completionPercent: items.length === 0 ? 0 : Math.round((levelVerified / items.length) * 100) };
+  }).filter((level) => level.total > 0);
 
-  const catalogue = DARE_TEMPLATES.map((dare) => {
-    const row = verifiedBySlug.get(dare.slug);
-    return { ...dare, status: row?.status === "VERIFIED" || row?.status === "REJECTED" || row?.status === "PENDING" ? row.status : "NOT_STARTED" as const, completionId: row?.id ?? null, postPermalink: row?.post.permalink ?? null };
+  const catalogue = DARE_TEMPLATES.map((item) => {
+    const completion = bySlug.get(item.slug);
+    return { ...item, status: completionStatus(completion?.status), completionId: completion?.id ?? null, postPermalink: completion?.post.permalink ?? null };
   });
 
-  return {
-    generatedAt: new Date().toISOString(),
-    account,
-    summary: { detected: completions.length, pending, verified, rejected, playbook, community, completionPercent: Math.round((verifiedPlaybookSlugs.size / DARE_TEMPLATES.length) * 100) },
-    levels,
-    catalogue,
-    pending: completions.filter((row) => row.status === "PENDING").slice(0, 25).map(toCompletionRow),
-    recent: completions.slice(0, 25).map(toCompletionRow),
-  };
+  return { generatedAt: new Date().toISOString(), account, summary: { detected: completions.length, pending, verified, rejected, playbook, community, completionPercent: Math.round((verifiedSlugs.size / DARE_TEMPLATES.length) * 100) }, levels, catalogue, pending: completions.filter((row) => row.status === "PENDING").slice(0, 25).map(toCompletionRow), recent: completions.slice(0, 25).map(toCompletionRow) };
 }
 
 export async function reviewDareCompletion(ownerUserId: string, input: { id: string; status: "PENDING" | "VERIFIED" | "REJECTED"; dareSlug?: string | null; completionType?: "PLAYBOOK" | "COMMUNITY"; darerUsername?: string | null; notes?: string | null }) {
   const existing = await prisma.dareCompletion.findFirst({ where: { id: input.id, ownerUserId } });
   if (!existing) throw new Error("Dare completion not found.");
 
-  const dare = input.dareSlug ? DARE_BY_SLUG.get(input.dareSlug) : null;
+  const nextType = input.completionType ?? (existing.completionType === "COMMUNITY" ? "COMMUNITY" : "PLAYBOOK");
+  const nextSlug = nextType === "PLAYBOOK" ? input.dareSlug ?? existing.dareSlug : null;
+  const nextDare = nextSlug ? DARE_BY_SLUG.get(nextSlug) : null;
   const now = new Date();
 
   return prisma.dareCompletion.update({
     where: { id: input.id },
-    data: {
-      status: input.status,
-      completionType: input.completionType ?? existing.completionType,
-      dareSlug: input.completionType === "PLAYBOOK" ? input.dareSlug ?? existing.dareSlug : null,
-      dareName: input.completionType === "PLAYBOOK" ? dare?.name ?? existing.dareName : "Community dare",
-      dareLevel: input.completionType === "PLAYBOOK" ? dare?.level ?? existing.dareLevel : null,
-      darerUsername: input.completionType === "COMMUNITY" ? normaliseUsername(input.darerUsername) || existing.darerUsername : null,
-      notes: input.notes ?? existing.notes,
-      verifiedAt: input.status === "VERIFIED" ? now : null,
-      rejectedAt: input.status === "REJECTED" ? now : null,
-    },
+    data: { status: input.status, completionType: nextType, dareSlug: nextSlug, dareName: nextType === "PLAYBOOK" ? nextDare?.name ?? existing.dareName : "Community dare", dareLevel: nextType === "PLAYBOOK" ? nextDare?.level ?? existing.dareLevel : null, darerUsername: nextType === "COMMUNITY" ? normaliseUsername(input.darerUsername) || existing.darerUsername : null, notes: input.notes ?? existing.notes, verifiedAt: input.status === "VERIFIED" ? now : null, rejectedAt: input.status === "REJECTED" ? now : null },
   });
 }
