@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { readdir, readFile } from "node:fs/promises";
+import { join, resolve } from "node:path";
 
 import { prisma } from "@/lib/db/prisma";
 import { parseHistoricalSnapshotContent, type ParsedHistoricalComment, type ParsedHistoricalPost, type ParsedProfileMetrics } from "./snapshot-parser";
@@ -21,6 +23,15 @@ export type SnapshotImportResult = {
   username: string | null;
   accountMetricImported: boolean;
   profileMetrics: ParsedProfileMetrics;
+};
+
+export type FolderSnapshotImportResult = {
+  directory: string;
+  filesFound: number;
+  filesImported: number;
+  filesSkipped: number;
+  failed: Array<{ fileName: string; error: string }>;
+  imported: SnapshotImportResult[];
 };
 
 export type ReparseFollowerResult = {
@@ -72,6 +83,9 @@ type AccountRow = {
   awarderKarma: number;
   followerCount: number | null;
 };
+
+const DEFAULT_FOLDER_IMPORT_DIR = "data/historical-snapshots";
+const SNAPSHOT_FILE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})-(\d{2})-(\d{2})\.html?$/i;
 
 function countValue(rows: CountRow[]): number {
   return Number(rows[0]?.count ?? 0);
@@ -179,6 +193,41 @@ function profileMetricsFromMetadata(metadata: unknown): ParsedProfileMetrics | n
     followerCount,
     raw: { parser: "historical-snapshot-metadata" },
   };
+}
+
+function localDateTimeToDate(year: number, month: number, day: number, hour: number, minute: number, timezone = "Europe/London"): Date {
+  const utcGuess = Date.UTC(year, month - 1, day, hour, minute, 0, 0);
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: timezone,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23",
+  });
+
+  const parts = Object.fromEntries(formatter.formatToParts(new Date(utcGuess)).filter((part) => part.type !== "literal").map((part) => [part.type, Number(part.value)]));
+  const zonedAsUtc = Date.UTC(parts.year, parts.month - 1, parts.day, parts.hour, parts.minute, parts.second, 0);
+  const offset = zonedAsUtc - utcGuess;
+  const corrected = new Date(utcGuess - offset);
+
+  if (Number.isNaN(corrected.getTime())) throw new Error("Could not parse snapshot filename date/time.");
+  return corrected;
+}
+
+function capturedAtFromSnapshotFileName(fileName: string): Date | null {
+  const match = fileName.match(SNAPSHOT_FILE_PATTERN);
+  if (!match) return null;
+
+  const [, year, month, day, hour, minute] = match.map(Number);
+  return localDateTimeToDate(year, month, day, hour, minute);
+}
+
+function folderImportDirectory(directory?: string | null): string {
+  const configured = directory?.trim() || process.env.HISTORICAL_SNAPSHOT_IMPORT_DIR?.trim() || DEFAULT_FOLDER_IMPORT_DIR;
+  return resolve(process.cwd(), configured);
 }
 
 async function cleanupZeroFollowerCounts(ownerUserId: string): Promise<Pick<ReparseFollowerResult, "zeroMetricSnapshotsDeleted" | "zeroAccountFollowersCleared">> {
@@ -472,6 +521,50 @@ export async function importHistoricalSnapshot(input: SnapshotImportInput): Prom
     username,
     accountMetricImported,
     profileMetrics,
+  };
+}
+
+export async function importHistoricalSnapshotsFromFolder(input: { ownerUserId: string; username?: string | null; directory?: string | null }): Promise<FolderSnapshotImportResult> {
+  const directory = folderImportDirectory(input.directory);
+  const entries = await readdir(directory, { withFileTypes: true });
+  const htmlFiles = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => entry.name)
+    .filter((fileName) => SNAPSHOT_FILE_PATTERN.test(fileName))
+    .sort();
+
+  const failed: FolderSnapshotImportResult["failed"] = [];
+  const imported: SnapshotImportResult[] = [];
+
+  for (const fileName of htmlFiles) {
+    const capturedAt = capturedAtFromSnapshotFileName(fileName);
+    if (!capturedAt) {
+      failed.push({ fileName, error: "File name must match YYYY-MM-DD-HH-MM.html." });
+      continue;
+    }
+
+    try {
+      const content = await readFile(join(directory, fileName), "utf8");
+      const result = await importHistoricalSnapshot({
+        ownerUserId: input.ownerUserId,
+        capturedAt,
+        content,
+        sourceFileName: fileName,
+        username: input.username?.trim() || null,
+      });
+      imported.push(result);
+    } catch (error) {
+      failed.push({ fileName, error: error instanceof Error ? error.message : "Unable to import file." });
+    }
+  }
+
+  return {
+    directory,
+    filesFound: htmlFiles.length,
+    filesImported: imported.length,
+    filesSkipped: failed.length,
+    failed,
+    imported,
   };
 }
 
