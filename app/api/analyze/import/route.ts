@@ -5,6 +5,7 @@ import { buildAccountAnalytics } from "@/lib/analytics";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { BrowserImportError, parseBrowserImport } from "@/lib/browser-import";
 import { saveAccountScan } from "@/lib/db/scans";
+import { logEvent } from "@/lib/events/log";
 import { enqueuePlannerJobForScan } from "@/lib/planner/queue";
 
 export const dynamic = "force-dynamic";
@@ -27,6 +28,7 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
 
   const validated = validateImportRequest(body);
   if (!validated.ok) {
+    await logEvent({ ownerUserId: user.id, type: "scan_import_rejected", severity: "warn", message: validated.error });
     return NextResponse.json<ErrorResponse>({ error: validated.error }, { status: validated.status });
   }
 
@@ -38,6 +40,21 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
     const plannerJob = validated.value.enqueuePlannerJob ? await enqueuePlannerJobForScan(savedScan.scanId, user.id) : null;
 
+    await logEvent({
+      ownerUserId: user.id,
+      accountId: savedScan.accountId,
+      scanId: savedScan.scanId,
+      jobId: plannerJob?.id ?? null,
+      type: "scan_imported",
+      message: `Imported browser scan for u/${accountData.profile.username}.`,
+      metadata: {
+        posts: accountData.posts.length,
+        comments: accountData.comments.length,
+        plannerQueued: Boolean(plannerJob),
+        deepDiveJobsRequested: validated.value.enqueueDeepDiveJobs,
+      },
+    });
+
     return NextResponse.json({
       profile: accountData.profile,
       analytics,
@@ -47,10 +64,12 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
     });
   } catch (error) {
     if (error instanceof BrowserImportError) {
+      await logEvent({ ownerUserId: user.id, type: "scan_import_failed", severity: "warn", message: error.message });
       return NextResponse.json<ErrorResponse>({ error: error.message }, { status: 400 });
     }
 
     console.error(error);
+    await logEvent({ ownerUserId: user.id, type: "scan_import_failed", severity: "error", message: error instanceof Error ? error.message : "Unable to analyse JSON." });
     return NextResponse.json<ErrorResponse>({ error: "Unable to analyse JSON." }, { status: 500 });
   }
 }
