@@ -47,7 +47,7 @@ async function contentFromForm(form: FormData): Promise<{ content: string; fileN
 
   const pasted = form.get("content");
   if (typeof pasted === "string" && pasted.trim().length > 0) {
-    return { content: pasted, fileName: typeof form.get("sourceFileName") === "string" ? String(form.get("sourceFileName")) : null };
+    return { content: pasted, fileName: null };
   }
 
   throw new Error("Upload a .txt/.html file or paste the snapshot HTML/JSON.");
@@ -76,12 +76,13 @@ export async function POST(request: NextRequest): Promise<NextResponse<SnapshotI
     const timezone = String(form.get("timezone") ?? "Europe/London") || "Europe/London";
     const capturedAt = parseLocalDateTime(capturedDate, capturedTime, timezone);
     const { content, fileName } = await contentFromForm(form);
+    const label = typeof form.get("sourceFileName") === "string" && String(form.get("sourceFileName")).trim().length > 0 ? String(form.get("sourceFileName")).trim() : fileName;
 
     const result = await importHistoricalSnapshot({
       ownerUserId: user.id,
       capturedAt,
       content,
-      sourceFileName: fileName,
+      sourceFileName: label,
     });
 
     return NextResponse.json(result);
