@@ -3,8 +3,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { savePostDeepDiveResult } from "@/lib/crawler/post-deep-dive";
 import { prisma } from "@/lib/db/prisma";
-import type { RedditPostDeepDive, RedditThreadComment } from "@/lib/reddit";
-import type { RedditPost } from "@/lib/types";
+import type { RedditPostDeepDive, RedditPostInsights, RedditThreadComment } from "@/lib/reddit";
+import type { JsonObject, RedditPost } from "@/lib/types";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +35,10 @@ function nullableNumberValue(value: unknown): number | null {
 
 function nullableStringValue(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
+}
+
+function nullableJsonObject(value: unknown): JsonObject | null {
+  return isRecord(value) ? value : null;
 }
 
 function toPost(value: unknown): RedditPost | null {
@@ -89,6 +93,17 @@ function toComment(value: unknown): RedditThreadComment | null {
   };
 }
 
+function toInsights(value: unknown): RedditPostInsights | null {
+  if (!isRecord(value)) return null;
+
+  return {
+    viewCount: nullableNumberValue(value.viewCount),
+    shareCount: nullableNumberValue(value.shareCount),
+    source: stringValue(value.source) || "reddit-post-page",
+    raw: nullableJsonObject(value.raw),
+  };
+}
+
 function toDeepDive(value: unknown): RedditPostDeepDive | null {
   if (!isRecord(value)) return null;
 
@@ -101,6 +116,7 @@ function toDeepDive(value: unknown): RedditPostDeepDive | null {
     post,
     comments,
     rawCommentCount: numberValue(value.rawCommentCount, comments.length),
+    insights: toInsights(value.insights),
   };
 }
 
