@@ -1,3 +1,4 @@
+import type { ProductOpsSettings } from "@/lib/product/ops";
 import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
 import { normaliseRedditUsername } from "@/utils/normalise-reddit-username";
 
@@ -11,8 +12,10 @@ export type ImportRequest = {
   enqueuePlannerJob: boolean;
 };
 
+type ProductOpsSettingsPatch = Partial<Pick<ProductOpsSettings, "activeAccountId" | "timezone" | "profileScanInterval" | "deepDiveInterval" | "deepDiveBatchSize" | "plannerEnabled" | "plannerModel" | "weeklyReportEnabled" | "trackedSubredditText">>;
+
 export type ProductOpsAction =
-  | { action: "settings:update"; values: Record<string, unknown> }
+  | { action: "settings:update"; values: ProductOpsSettingsPatch }
   | { action: "planned:create"; subreddit: string; title: string; format?: string; plannedFor?: string | null; expectedScore?: number | null; expectedFollowerGain?: number | null; rationale?: string | null; notes?: string | null }
   | { action: "planned:update"; id: string; status?: string; actualScore?: number | null; actualFollowerGain?: number | null; notes?: string | null }
   | { action: "subreddit:add"; subreddit: string; notes?: string | null }
@@ -109,7 +112,7 @@ export function validateProductOpsAction(value: unknown): ValidationResult<Produ
   switch (value.action) {
     case "settings:update": {
       if (!isObject(value.values)) return { ok: false, status: 400, error: "Settings values are required." };
-      return { ok: true, value: { action: "settings:update", values: value.values } };
+      return { ok: true, value: { action: "settings:update", values: normaliseSettingsPatch(value.values) } };
     }
 
     case "planned:create": {
@@ -183,6 +186,20 @@ export function validateProductOpsAction(value: unknown): ValidationResult<Produ
     default:
       return { ok: false, status: 400, error: `Unsupported product ops action: ${value.action}` };
   }
+}
+
+function normaliseSettingsPatch(value: Record<string, unknown>): ProductOpsSettingsPatch {
+  return {
+    activeAccountId: optionalString(value.activeAccountId, 200) ?? undefined,
+    timezone: optionalString(value.timezone, 120) ?? undefined,
+    profileScanInterval: optionalNumber(value.profileScanInterval) ?? undefined,
+    deepDiveInterval: optionalNumber(value.deepDiveInterval) ?? undefined,
+    deepDiveBatchSize: optionalNumber(value.deepDiveBatchSize) ?? undefined,
+    plannerEnabled: optionalBoolean(value.plannerEnabled),
+    plannerModel: optionalString(value.plannerModel, 200) ?? undefined,
+    weeklyReportEnabled: optionalBoolean(value.weeklyReportEnabled),
+    trackedSubredditText: optionalString(value.trackedSubredditText, MAX_NOTES_LENGTH) ?? undefined,
+  };
 }
 
 function validateRedditUsernameLikeName(value: unknown, label: string): ValidationResult<string> {
