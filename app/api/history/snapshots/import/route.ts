@@ -77,12 +77,14 @@ export async function POST(request: NextRequest): Promise<NextResponse<SnapshotI
     const capturedAt = parseLocalDateTime(capturedDate, capturedTime, timezone);
     const { content, fileName } = await contentFromForm(form);
     const label = typeof form.get("sourceFileName") === "string" && String(form.get("sourceFileName")).trim().length > 0 ? String(form.get("sourceFileName")).trim() : fileName;
+    const username = typeof form.get("username") === "string" && String(form.get("username")).trim().length > 0 ? String(form.get("username")).trim().replace(/^u\//i, "") : null;
 
     const result = await importHistoricalSnapshot({
       ownerUserId: user.id,
       capturedAt,
       content,
       sourceFileName: label,
+      username,
     });
 
     return NextResponse.json(result);
