@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
-import type { ProductOpsResponse } from "@/lib/product/ops";
 import type { ExtensionState } from "@/lib/extension/types";
+import type { ProductOpsResponse } from "@/lib/product/ops";
 import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
 
@@ -52,7 +52,7 @@ function cadence(ms: number): string {
   return `${minutes}m`;
 }
 
-function Field({ label, children }: { label: string; children: React.ReactNode }) {
+function Field({ label, children }: { label: string; children: ReactNode }) {
   return (
     <label className="grid gap-1 text-sm font-bold text-[var(--text)]">
       <span>{label}</span>
