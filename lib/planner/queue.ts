@@ -3,34 +3,22 @@ import type { PlannerJobStatus as PrismaPlannerJobStatus, Prisma } from "@prisma
 import { prisma } from "@/lib/db/prisma";
 import type { JsonObject, PlannerJobStatus, PlannerJobSummary } from "@/lib/types";
 
-const DEFAULT_OLLAMA_BASE_URL = "https://ollama.tik-track.com";
-const PLANNER_MODEL_KEYWORDS = [
-  "qwen3.6",
-  "qwen3",
-  "qwen2.5",
-  "qwen",
-  "dolphin",
-  "nous",
-  "hermes",
-  "llama3.3",
-  "llama3.2",
-  "llama3.1",
-  "mistral-nemo",
-  "mistral",
-  "gemma4",
-  "gemma3",
-  "gemma2",
-];
-const PLANNER_MODEL_PENALTIES = ["embed", "embedding", "clip", "code", "coder"];
+const DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434";
+const DEFAULT_PLANNER_TIMEOUT_MS = 85_000;
+const DEFAULT_PLANNER_MAX_MODEL_B = 14;
+const DEFAULT_PLANNER_NUM_CTX = 4096;
+const DEFAULT_PLANNER_NUM_PREDICT = 700;
+const DEFAULT_PLANNER_PROMPT_MAX_CHARS = 7_500;
+const PLANNER_MODEL_KEYWORDS = ["qwen2.5", "qwen3", "qwen", "llama3.2", "llama3.1", "llama", "mistral", "gemma3", "gemma2", "dolphin", "nous", "hermes"];
+const PLANNER_MODEL_PENALTIES = ["embed", "embedding", "clip", "code", "coder", "vision"];
 const PLANNER_MODEL_BOOSTS = [
-  { keyword: "hauhaucs", score: 100_000 },
-  { keyword: "uncensored", score: 90_000 },
-  { keyword: "abliterated", score: 70_000 },
-  { keyword: "aggressive", score: 50_000 },
-  { keyword: "qwen3.6-27b", score: 25_000 },
-  { keyword: "qwen3.6:27b", score: 20_000 },
-  { keyword: "tools", score: 2_000 },
-  { keyword: "thinking", score: 1_500 },
+  { keyword: "qwen", score: 18_000 },
+  { keyword: "instruct", score: 8_000 },
+  { keyword: "chat", score: 5_000 },
+  { keyword: "dolphin", score: 4_000 },
+  { keyword: "hermes", score: 3_500 },
+  { keyword: "mistral", score: 3_000 },
+  { keyword: "llama", score: 2_500 },
 ];
 
 type OllamaModelDetails = {
@@ -104,13 +92,49 @@ function ollamaHeaders(): HeadersInit {
   };
 }
 
+function numericEnv(name: string, fallback: number): number {
+  const value = Number.parseInt(process.env[name] || "", 10);
+  return Number.isFinite(value) && value > 0 ? value : fallback;
+}
+
+function plannerTimeoutMs(): number {
+  return numericEnv("PLANNER_TIMEOUT_MS", DEFAULT_PLANNER_TIMEOUT_MS);
+}
+
+function plannerNumCtx(): number {
+  return numericEnv("PLANNER_NUM_CTX", DEFAULT_PLANNER_NUM_CTX);
+}
+
+function plannerNumPredict(): number {
+  return numericEnv("PLANNER_NUM_PREDICT", DEFAULT_PLANNER_NUM_PREDICT);
+}
+
+function plannerPromptMaxChars(): number {
+  return numericEnv("PLANNER_PROMPT_MAX_CHARS", DEFAULT_PLANNER_PROMPT_MAX_CHARS);
+}
+
+function plannerMaxModelB(): number {
+  return numericEnv("PLANNER_MAX_MODEL_B", DEFAULT_PLANNER_MAX_MODEL_B);
+}
+
+function allowLargeModels(): boolean {
+  return process.env.PLANNER_ALLOW_LARGE_MODELS === "1";
+}
+
 function toInputJson(value: unknown): Prisma.InputJsonValue {
   return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
 }
 
-function parameterSizeScore(value: string | undefined): number {
+function parameterSizeB(value: string | undefined): number | null {
   const match = value?.toLowerCase().match(/([0-9]+(?:\.[0-9]+)?)b/);
-  return match ? Number.parseFloat(match[1] ?? "0") * 100 : 0;
+  return match ? Number.parseFloat(match[1] ?? "0") : null;
+}
+
+function modelSizeB(model: OllamaModel): number | null {
+  const name = model.name ?? model.model ?? "";
+  const nameMatch = name.toLowerCase().match(/(?:^|[^0-9])([0-9]+(?:\.[0-9]+)?)b(?:[^a-z]|$)/);
+  const nameSize = nameMatch ? Number.parseFloat(nameMatch[1] ?? "0") : null;
+  return nameSize ?? parameterSizeB(model.details?.parameter_size);
 }
 
 function modelKeywordScore(model: OllamaModel): number {
@@ -118,27 +142,28 @@ function modelKeywordScore(model: OllamaModel): number {
   const lowerName = name.toLowerCase();
   const lowerCapabilities = (model.capabilities ?? []).join(" ").toLowerCase();
   const keywordIndex = PLANNER_MODEL_KEYWORDS.findIndex((keyword) => lowerName.includes(keyword));
-  const keywordScore = keywordIndex === -1 ? 0 : (PLANNER_MODEL_KEYWORDS.length - keywordIndex) * 1_000;
-  const penalty = PLANNER_MODEL_PENALTIES.some((keyword) => lowerName.includes(keyword)) ? 25_000 : 0;
+  const keywordScore = keywordIndex === -1 ? 0 : (PLANNER_MODEL_KEYWORDS.length - keywordIndex) * 750;
+  const penalty = PLANNER_MODEL_PENALTIES.some((keyword) => lowerName.includes(keyword)) ? 50_000 : 0;
   const boostScore = PLANNER_MODEL_BOOSTS.reduce((sum, boost) => {
     const haystack = `${lowerName} ${lowerCapabilities}`;
     return haystack.includes(boost.keyword) ? sum + boost.score : sum;
   }, 0);
-  const sizeMatch = lowerName.match(/(?:^|[^0-9])([0-9]+(?:\.[0-9]+)?)b(?:[^a-z]|$)/);
-  const nameSizeScore = sizeMatch ? Number.parseFloat(sizeMatch[1] ?? "0") * 100 : 0;
-  const detailSizeScore = parameterSizeScore(model.details?.parameter_size);
-  const contextScore = Math.min((model.details?.context_length ?? 0) / 10_000, 50);
+  const size = modelSizeB(model);
+  const sizeScore = size ? Math.max(0, 16 - Math.abs(size - 8)) * 650 : 0;
+  const tooLargePenalty = !allowLargeModels() && size && size > plannerMaxModelB() ? 90_000 + size * 1_000 : 0;
+  const contextScore = Math.min((model.details?.context_length ?? 0) / 10_000, 30);
 
-  return keywordScore + boostScore + Math.max(nameSizeScore, detailSizeScore) + contextScore - penalty;
+  return keywordScore + boostScore + sizeScore + contextScore - penalty - tooLargePenalty;
 }
 
 function choosePlannerModel(models: OllamaModel[]): string | null {
-  const candidates = models
-    .map((model) => ({ name: model.name?.trim() ?? model.model?.trim() ?? "", score: modelKeywordScore(model), size: model.size ?? 0 }))
+  const usable = models
+    .map((model) => ({ name: model.name?.trim() ?? model.model?.trim() ?? "", score: modelKeywordScore(model), size: modelSizeB(model), bytes: model.size ?? 0 }))
     .filter((model) => model.name.length > 0)
-    .sort((a, b) => b.score - a.score || b.size - a.size || a.name.localeCompare(b.name));
+    .sort((a, b) => b.score - a.score || Math.abs((a.size ?? 8) - 8) - Math.abs((b.size ?? 8) - 8) || a.bytes - b.bytes || a.name.localeCompare(b.name));
 
-  return candidates[0]?.name ?? null;
+  const preferred = usable.find((model) => allowLargeModels() || model.size === null || model.size <= plannerMaxModelB());
+  return preferred?.name ?? usable[0]?.name ?? null;
 }
 
 async function resolvePlannerModel(): Promise<string> {
@@ -169,6 +194,14 @@ function stringifyList(values: string[]): string {
   return values.length === 0 ? "None" : values.join("\n");
 }
 
+function truncate(value: string, maxLength: number): string {
+  return value.length <= maxLength ? value : `${value.slice(0, maxLength - 20)}\n...truncated...`;
+}
+
+function cleanText(value: string, maxLength = 160): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
 async function buildPlannerPrompt(scanId: string, ownerId?: string): Promise<string> {
   const scan = await prisma.accountScan.findFirst({
     where: {
@@ -179,15 +212,15 @@ async function buildPlannerPrompt(scanId: string, ownerId?: string): Promise<str
       account: true,
       postSnapshots: {
         orderBy: [{ score: "desc" }, { numComments: "desc" }],
-        take: 20,
+        take: 8,
       },
       subredditSnapshots: {
         orderBy: [{ totalScore: "desc" }],
-        take: 20,
+        take: 8,
       },
       mediaGroups: {
         orderBy: [{ totalScore: "desc" }],
-        take: 12,
+        take: 5,
       },
     },
   });
@@ -197,33 +230,33 @@ async function buildPlannerPrompt(scanId: string, ownerId?: string): Promise<str
   }
 
   const subredditLines = scan.subredditSnapshots.map(
-    (row) => `- r/${row.subreddit}: ${row.posts} posts, ${row.comments} comments, ${row.totalScore} total score, ${row.averagePostScore} avg post score`,
+    (row) => `r/${row.subreddit}: posts=${row.posts}, comments=${row.comments}, totalScore=${row.totalScore}, avgPost=${row.averagePostScore}`,
   );
   const postLines = scan.postSnapshots.map(
-    (post) => `- ${post.score} score / ${post.numComments} comments / r/${post.subreddit} / ${post.contentType}: ${post.title}`,
+    (post) => `${post.score} score, ${post.numComments} comments, r/${post.subreddit}, ${post.contentType}: ${cleanText(post.title)}`,
   );
   const mediaLines = scan.mediaGroups.map(
-    (group) => `- ${group.totalScore} total score across ${group.postCount} posts; best r/${group.bestSubreddit ?? "unknown"}; title: ${group.bestTitle ?? "unknown"}`,
+    (group) => `${group.totalScore} score across ${group.postCount} posts; best r/${group.bestSubreddit ?? "unknown"}: ${cleanText(group.bestTitle ?? "unknown")}`,
   );
 
-  return [
-    "You are the PaidPolitely next item planner for a Reddit creator account.",
-    "Use the scan data to suggest the next safe, platform-compliant Reddit post tests.",
-    "Return valid JSON only with: summary, nextPost, experiments, avoid, confidence.",
-    `Account: u/${scan.account.username}`,
-    `Scan source: ${scan.source}`,
-    `Captured posts: ${scan.cleanedPostCount}`,
-    `Captured comments: ${scan.cleanedCommentCount}`,
-    `Total post score: ${scan.totalPostScore}`,
-    `Best subreddit: ${scan.bestSubreddit ?? "unknown"}`,
-    `Best UTC hour: ${scan.bestPostingHourUtc === null ? "unknown" : `${scan.bestPostingHourUtc}:00`}`,
-    "Subreddit performance:",
-    stringifyList(subredditLines),
-    "Top posts:",
-    stringifyList(postLines),
-    "Repeated media groups:",
-    stringifyList(mediaLines),
+  const prompt = [
+    "You are PaidPolitely's concise Reddit account planner.",
+    "Use only this scan data. Do not invent subreddit rules. Recommend safe, platform-compliant post tests.",
+    "Return JSON only, no markdown, no thinking text.",
+    "Schema: {\"summary\":string,\"nextPost\":{\"subreddit\":string,\"title\":string,\"format\":string,\"timingUtc\":string,\"reason\":string},\"experiments\":string[],\"avoid\":string[],\"confidence\":\"low\"|\"medium\"|\"high\"}",
+    `Account=u/${scan.account.username}`,
+    `Source=${scan.source}`,
+    `CapturedPosts=${scan.cleanedPostCount}`,
+    `CapturedComments=${scan.cleanedCommentCount}`,
+    `TotalPostScore=${scan.totalPostScore}`,
+    `BestSubreddit=${scan.bestSubreddit ?? "unknown"}`,
+    `BestHourUtc=${scan.bestPostingHourUtc === null ? "unknown" : `${scan.bestPostingHourUtc}:00`}`,
+    "Subreddits:\n" + stringifyList(subredditLines),
+    "TopPosts:\n" + stringifyList(postLines),
+    "RepeatedMedia:\n" + stringifyList(mediaLines),
   ].join("\n\n");
+
+  return truncate(prompt, plannerPromptMaxChars());
 }
 
 export async function enqueuePlannerJobForScan(scanId: string, ownerId?: string): Promise<PlannerJobSummary> {
@@ -265,54 +298,83 @@ export async function enqueuePlannerJobForScan(scanId: string, ownerId?: string)
   return toPlannerJobSummary(job);
 }
 
+function stripThinkingText(value: string): string {
+  return value.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+}
+
 function extractJsonObjectFromText(value: string): JsonObject {
+  const cleaned = stripThinkingText(value);
+
   try {
-    const parsed = JSON.parse(value) as unknown;
+    const parsed = JSON.parse(cleaned) as unknown;
     if (isJsonObject(parsed)) return parsed;
   } catch {
     // Try loose extraction below.
   }
 
-  const firstBrace = value.indexOf("{");
-  const lastBrace = value.lastIndexOf("}");
+  const firstBrace = cleaned.indexOf("{");
+  const lastBrace = cleaned.lastIndexOf("}");
   if (firstBrace >= 0 && lastBrace > firstBrace) {
     try {
-      const parsed = JSON.parse(value.slice(firstBrace, lastBrace + 1)) as unknown;
+      const parsed = JSON.parse(cleaned.slice(firstBrace, lastBrace + 1)) as unknown;
       if (isJsonObject(parsed)) return parsed;
     } catch {
       // Return raw output below.
     }
   }
 
-  return { raw: value };
+  return { raw: cleaned };
 }
 
 async function requestPlannerCompletion(prompt: string, model: string): Promise<JsonObject> {
-  const response = await fetch(`${ollamaBaseUrl()}/api/chat`, {
-    method: "POST",
-    cache: "no-store",
-    headers: ollamaHeaders(),
-    body: JSON.stringify({
-      model,
-      stream: false,
-      messages: [
-        { role: "system", content: "Return valid JSON only." },
-        { role: "user", content: prompt },
-      ],
-      options: { temperature: 0.7 },
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), plannerTimeoutMs());
 
-  if (!response.ok) {
-    const body = await response.text();
-    throw new Error(`Planner request failed: ${response.status} ${body.slice(0, 200)}`);
+  try {
+    const response = await fetch(`${ollamaBaseUrl()}/api/chat`, {
+      method: "POST",
+      cache: "no-store",
+      headers: ollamaHeaders(),
+      signal: controller.signal,
+      body: JSON.stringify({
+        model,
+        stream: false,
+        messages: [
+          {
+            role: "system",
+            content: "You are a fast JSON-only planner. Return one compact valid JSON object. Do not include markdown or reasoning.",
+          },
+          { role: "user", content: prompt },
+        ],
+        format: "json",
+        options: {
+          temperature: 0.25,
+          top_p: 0.9,
+          num_ctx: plannerNumCtx(),
+          num_predict: plannerNumPredict(),
+        },
+      }),
+    });
+
+    if (!response.ok) {
+      const body = await response.text();
+      throw new Error(`Planner request failed: ${response.status} ${body.slice(0, 200)}`);
+    }
+
+    const payload = (await response.json()) as OllamaChatResponse;
+    const content = payload.message?.content ?? payload.response ?? "";
+    if (!content.trim()) throw new Error("Planner returned an empty response.");
+
+    return extractJsonObjectFromText(content);
+  } catch (error) {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw new Error(`Planner request timed out after ${plannerTimeoutMs()}ms. Use a smaller OLLAMA_PLANNER_MODEL or local OLLAMA_BASE_URL.`);
+    }
+
+    throw error;
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const payload = (await response.json()) as OllamaChatResponse;
-  const content = payload.message?.content ?? payload.response ?? "";
-  if (!content.trim()) throw new Error("Planner returned an empty response.");
-
-  return extractJsonObjectFromText(content);
 }
 
 export async function processNextPlannerJob(): Promise<ProcessPlannerJobResult> {
