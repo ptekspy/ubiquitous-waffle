@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 
+import { AccountMetricTrendCard } from "@/components/account-metric-trend-card";
 import { AppShell } from "@/components/app-shell";
 import { AuthGate } from "@/components/auth-gate";
 import { Dashboard } from "@/components/dashboard";
@@ -186,7 +187,8 @@ function AuthenticatedDashboard() {
       setImportPayload(raw);
       const imported = await importRawPayload(raw);
       setExtensionState("installed");
-      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}${response.status === "captured_headless" ? " without opening Reddit" : " with quiet tab fallback"}.` : "The extension captured data, but the app could not import it.");
+      window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
+      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}${response.status === "captured_headless" ? " without opening Reddit" : " with quiet tab fallback"}. Profile and deep-dive automation can now continue from the local queue.` : "The extension captured data, but the app could not import it.");
     } catch (extensionError) {
       setState("error");
       setExtensionState("missing");
@@ -200,6 +202,7 @@ function AuthenticatedDashboard() {
     setData(scan);
     setUsername(scan.profile.username);
     setState("loaded");
+    window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
   }
 
   const loading = state === "loading" || workspaceState === "loading";
@@ -229,7 +232,11 @@ function AuthenticatedDashboard() {
 
       <LocalExtensionJobQueue username={username} extensionState={extensionState} scanId={data?.scanId ?? null} onImported={acceptBrowserScheduledScan} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
 
-      <HistoricalAnalyticsPanel />
+      <HistoricalAnalyticsPanel username={username} hasLiveScan={Boolean(data)} onRunFirstScan={scanWithExtension} />
+
+      <section id="trends" className="analytics-section">
+        <AccountMetricTrendCard />
+      </section>
 
       {data ? <Dashboard data={data} /> : <EmptyState />}
 
