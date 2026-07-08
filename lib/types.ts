@@ -121,6 +121,39 @@ export type AccountMetricHistory = {
   events?: AccountMetricEvent[];
 };
 
+export type PostInsightPoint = {
+  capturedAt: string;
+  score: number;
+  comments: number;
+  upvoteRatio: number | null;
+  estimatedUpvotes: number | null;
+  estimatedDownvotes: number | null;
+  viewCount: number | null;
+  shareCount: number | null;
+};
+
+export type PostInsightRow = {
+  id: string;
+  redditId: string;
+  title: string;
+  subreddit: string;
+  permalink: string;
+  createdAt: string;
+  score: number;
+  comments: number;
+  latestScore: number | null;
+  latestComments: number | null;
+  latestViews: number | null;
+  latestShares: number | null;
+  latestInsightAt: string | null;
+  history: PostInsightPoint[];
+};
+
+export type PostInsightsResponse = {
+  generatedAt: string;
+  rows: PostInsightRow[];
+};
+
 export type InsightSeverity = "good" | "watch" | "neutral";
 
 export type DashboardInsight = {
