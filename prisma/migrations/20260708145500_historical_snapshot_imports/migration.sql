@@ -50,7 +50,6 @@ CREATE TABLE IF NOT EXISTS "HistoricalCommentObservation" (
 
 CREATE INDEX IF NOT EXISTS "HistoricalSnapshot_ownerUserId_capturedAt_idx" ON "HistoricalSnapshot"("ownerUserId", "capturedAt");
 CREATE INDEX IF NOT EXISTS "HistoricalSnapshot_accountId_capturedAt_idx" ON "HistoricalSnapshot"("accountId", "capturedAt");
-CREATE UNIQUE INDEX IF NOT EXISTS "HistoricalSnapshot_ownerUserId_sourceFileName_capturedAt_key" ON "HistoricalSnapshot"("ownerUserId", "sourceFileName", "capturedAt") WHERE "sourceFileName" IS NOT NULL;
 
 CREATE UNIQUE INDEX IF NOT EXISTS "HistoricalPostObservation_snapshotId_redditId_key" ON "HistoricalPostObservation"("snapshotId", "redditId");
 CREATE INDEX IF NOT EXISTS "HistoricalPostObservation_ownerUserId_observedAt_idx" ON "HistoricalPostObservation"("ownerUserId", "observedAt");
