@@ -40,6 +40,7 @@ model User {
   trackedSubreddits   TrackedSubreddit[]
   trackedPeerAccounts TrackedPeerAccount[]
   weeklyReports       WeeklyReport[]
+  historicalSnapshots HistoricalSnapshot[]
 
   @@map("user")
 }
@@ -345,19 +346,19 @@ model DareCompletion {
 }
 
 model WorkspaceSetting {
-  id                     String   @id
-  ownerUserId            String   @unique
-  activeAccountId        String?
-  timezone               String   @default("Europe/London")
-  profileScanInterval    Int      @default(900000)
-  deepDiveInterval       Int      @default(7200000)
-  deepDiveBatchSize      Int      @default(50)
-  plannerEnabled         Boolean  @default(true)
-  plannerModel           String?
-  weeklyReportEnabled    Boolean  @default(true)
-  trackedSubredditText   String   @default("daresgonewild")
-  createdAt              DateTime @default(now())
-  updatedAt              DateTime @default(now())
+  id                   String   @id
+  ownerUserId          String   @unique
+  activeAccountId      String?
+  timezone             String   @default("Europe/London")
+  profileScanInterval  Int      @default(900000)
+  deepDiveInterval     Int      @default(7200000)
+  deepDiveBatchSize    Int      @default(50)
+  plannerEnabled       Boolean  @default(true)
+  plannerModel         String?
+  weeklyReportEnabled  Boolean  @default(true)
+  trackedSubredditText String   @default("daresgonewild")
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @default(now())
 
   owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
 
@@ -440,6 +441,74 @@ model WeeklyReport {
 
   @@index([ownerUserId, weekStart])
   @@index([accountId, weekStart])
+}
+
+model HistoricalSnapshot {
+  id             String   @id
+  ownerUserId    String
+  accountId      String?
+  source         String
+  sourceFileName String?
+  capturedAt     DateTime
+  importedAt     DateTime @default(now())
+  postCount      Int      @default(0)
+  commentCount   Int      @default(0)
+  metadata       Json?
+
+  owner               User                           @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  postObservations    HistoricalPostObservation[]
+  commentObservations HistoricalCommentObservation[]
+
+  @@index([ownerUserId, capturedAt])
+  @@index([accountId, capturedAt])
+}
+
+model HistoricalPostObservation {
+  id          String   @id
+  snapshotId  String
+  ownerUserId String
+  accountId   String?
+  redditId    String
+  title       String
+  subreddit   String
+  permalink   String
+  createdUtc  Int
+  score       Int      @default(0)
+  numComments Int      @default(0)
+  upvoteRatio Float?
+  observedAt  DateTime
+  raw         Json?
+
+  snapshot HistoricalSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, redditId])
+  @@index([ownerUserId, observedAt])
+  @@index([redditId, observedAt])
+  @@index([subreddit, observedAt])
+}
+
+model HistoricalCommentObservation {
+  id          String   @id
+  snapshotId  String
+  ownerUserId String
+  accountId   String?
+  redditId    String
+  body        String
+  subreddit   String
+  permalink   String
+  createdUtc  Int
+  score       Int      @default(0)
+  linkTitle   String?
+  viewCount   Int?
+  observedAt  DateTime
+  raw         Json?
+
+  snapshot HistoricalSnapshot @relation(fields: [snapshotId], references: [id], onDelete: Cascade)
+
+  @@unique([snapshotId, redditId])
+  @@index([ownerUserId, observedAt])
+  @@index([redditId, observedAt])
+  @@index([subreddit, observedAt])
 }
 
 model PostMetricSnapshot {
