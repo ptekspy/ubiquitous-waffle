@@ -1,5 +1,6 @@
 import type { PlannerJobStatus as PrismaPlannerJobStatus, Prisma } from "@prisma/client";
 
+import { getPlannerInsightContext } from "@/lib/analytics/dashboard-insights";
 import { prisma } from "@/lib/db/prisma";
 import type { JsonObject, PlannerJobStatus, PlannerJobSummary } from "@/lib/types";
 
@@ -229,19 +230,14 @@ async function buildPlannerPrompt(scanId: string, ownerId?: string): Promise<str
     throw new Error("Planner scan not found.");
   }
 
-  const subredditLines = scan.subredditSnapshots.map(
-    (row) => `r/${row.subreddit}: posts=${row.posts}, comments=${row.comments}, totalScore=${row.totalScore}, avgPost=${row.averagePostScore}`,
-  );
-  const postLines = scan.postSnapshots.map(
-    (post) => `${post.score} score, ${post.numComments} comments, r/${post.subreddit}, ${post.contentType}: ${cleanText(post.title)}`,
-  );
-  const mediaLines = scan.mediaGroups.map(
-    (group) => `${group.totalScore} score across ${group.postCount} posts; best r/${group.bestSubreddit ?? "unknown"}: ${cleanText(group.bestTitle ?? "unknown")}`,
-  );
+  const dashboardContext = await getPlannerInsightContext(scan.accountId).catch(() => "No dashboard insight context available.");
+  const subredditLines = scan.subredditSnapshots.map((row) => `r/${row.subreddit}: posts=${row.posts}, comments=${row.comments}, totalScore=${row.totalScore}, avgPost=${row.averagePostScore}`);
+  const postLines = scan.postSnapshots.map((post) => `${post.score} score, ${post.numComments} comments, r/${post.subreddit}, ${post.contentType}: ${cleanText(post.title)}`);
+  const mediaLines = scan.mediaGroups.map((group) => `${group.totalScore} score across ${group.postCount} posts; best r/${group.bestSubreddit ?? "unknown"}: ${cleanText(group.bestTitle ?? "unknown")}`);
 
   const prompt = [
     "You are PaidPolitely's concise Reddit account planner.",
-    "Use only this scan data. Do not invent subreddit rules. Recommend safe, platform-compliant post tests.",
+    "Use only this scan data and dashboard insight context. Do not invent subreddit rules. Recommend safe, platform-compliant post tests.",
     "Return JSON only, no markdown, no thinking text.",
     "Schema: {\"summary\":string,\"nextPost\":{\"subreddit\":string,\"title\":string,\"format\":string,\"timingUtc\":string,\"reason\":string},\"experiments\":string[],\"avoid\":string[],\"confidence\":\"low\"|\"medium\"|\"high\"}",
     `Account=u/${scan.account.username}`,
@@ -251,6 +247,7 @@ async function buildPlannerPrompt(scanId: string, ownerId?: string): Promise<str
     `TotalPostScore=${scan.totalPostScore}`,
     `BestSubreddit=${scan.bestSubreddit ?? "unknown"}`,
     `BestHourUtc=${scan.bestPostingHourUtc === null ? "unknown" : `${scan.bestPostingHourUtc}:00`}`,
+    dashboardContext,
     "Subreddits:\n" + stringifyList(subredditLines),
     "TopPosts:\n" + stringifyList(postLines),
     "RepeatedMedia:\n" + stringifyList(mediaLines),
