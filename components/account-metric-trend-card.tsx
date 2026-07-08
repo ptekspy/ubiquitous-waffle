@@ -2,16 +2,17 @@
 
 import { useEffect, useMemo, useState, type PointerEvent } from "react";
 
-import type { AccountMetricEvent, AccountMetricHistory, AccountMetricPoint } from "@/lib/types";
+import type { AccountMetricEvent, AccountMetricHistory, AccountMetricPoint, HistoricalPerformanceResponse } from "@/lib/types";
 import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
 
 type WindowKey = AccountMetricHistory["window"];
 type LoadState = "idle" | "loading" | "loaded" | "error";
-type MetricKey = "totalKarma" | "linkKarma" | "commentKarma" | "followerCount";
+type ObservedMetricKey = "totalKarma" | "linkKarma" | "commentKarma" | "followerCount";
+type MetricKey = ObservedMetricKey | "backfilledScore" | "backfilledDailyScore";
 
-type MetricConfig = { key: MetricKey; label: string; axisLabel: string };
-type ChartPoint = { index: number; capturedAt: string; value: number; raw: AccountMetricPoint; x: number; y: number };
+type MetricConfig = { key: MetricKey; label: string; axisLabel: string; mode: "observed" | "backfilled" };
+type ChartPoint = { index: number; capturedAt: string; value: number; x: number; y: number };
 type ChartScale = { min: number; max: number; ticks: number[] };
 type ChartEvent = AccountMetricEvent & { x: number };
 
@@ -22,12 +23,15 @@ const windows: Array<{ key: WindowKey; label: string }> = [
 ];
 
 const metrics: MetricConfig[] = [
-  { key: "totalKarma", label: "Total karma", axisLabel: "Karma" },
-  { key: "linkKarma", label: "Link karma", axisLabel: "Karma" },
-  { key: "commentKarma", label: "Comment karma", axisLabel: "Karma" },
-  { key: "followerCount", label: "Followers", axisLabel: "Followers" },
+  { key: "totalKarma", label: "Total karma", axisLabel: "Karma", mode: "observed" },
+  { key: "linkKarma", label: "Link karma", axisLabel: "Karma", mode: "observed" },
+  { key: "commentKarma", label: "Comment karma", axisLabel: "Karma", mode: "observed" },
+  { key: "followerCount", label: "Followers", axisLabel: "Followers", mode: "observed" },
+  { key: "backfilledScore", label: "Backfilled score", axisLabel: "Estimated score", mode: "backfilled" },
+  { key: "backfilledDailyScore", label: "Daily score", axisLabel: "Estimated daily score", mode: "backfilled" },
 ];
 
+const observedMetricKeys = new Set<MetricKey>(["totalKarma", "linkKarma", "commentKarma", "followerCount"]);
 const chart = { width: 840, height: 340, top: 32, right: 30, bottom: 58, left: 76 };
 const plot = {
   left: chart.left,
@@ -44,7 +48,13 @@ async function fetchHistory(windowKey: WindowKey): Promise<AccountMetricHistory>
   return (await response.json()) as AccountMetricHistory;
 }
 
-function metricValue(point: AccountMetricPoint, metricKey: MetricKey): number | null {
+async function fetchBackfilledHistory(): Promise<HistoricalPerformanceResponse> {
+  const response = await fetch(`/api/history/performance?preset=all&ts=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Unable to load imported historical score history.");
+  return (await response.json()) as HistoricalPerformanceResponse;
+}
+
+function metricValue(point: AccountMetricPoint, metricKey: ObservedMetricKey): number | null {
   const value = point[metricKey];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
 }
@@ -62,10 +72,10 @@ function niceStep(rawStep: number): number {
 function chartScale(values: number[]): ChartScale {
   const rawMin = Math.min(...values);
   const rawMax = Math.max(...values);
-  const paddedMin = rawMin === rawMax ? Math.max(0, rawMin - 1) : rawMin;
+  const paddedMin = rawMin === rawMax ? rawMin - 1 : rawMin;
   const paddedMax = rawMin === rawMax ? rawMax + 1 : rawMax;
   const step = niceStep((paddedMax - paddedMin) / 4);
-  const min = Math.max(0, Math.floor(paddedMin / step) * step);
+  const min = rawMin < 0 ? Math.floor(paddedMin / step) * step : Math.max(0, Math.floor(paddedMin / step) * step);
   const max = Math.ceil(paddedMax / step) * step;
   const ticks: number[] = [];
   for (let value = min; value <= max + step / 2; value += step) ticks.push(value);
@@ -101,22 +111,23 @@ function formatDelta(value: number): string {
   return `${value > 0 ? "+" : ""}${compactNumber(value)}`;
 }
 
-function formatPointTime(value: string, windowKey: WindowKey): string {
+function formatPointTime(value: string, windowKey: WindowKey, imported = false): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
+  if (imported) return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "2-digit" }).format(date);
   if (windowKey === "week") return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
   return new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", day: windowKey === "day" ? "numeric" : undefined, month: windowKey === "day" ? "short" : undefined }).format(date);
 }
 
-function xAxisLabels(points: ChartPoint[], windowKey: WindowKey): Array<{ x: number; label: string }> {
+function xAxisLabels(points: ChartPoint[], windowKey: WindowKey, imported = false): Array<{ x: number; label: string }> {
   if (points.length === 0) return [];
-  if (points.length <= 4) return points.map((point) => ({ x: point.x, label: formatPointTime(point.capturedAt, windowKey) }));
+  if (points.length <= 4) return points.map((point) => ({ x: point.x, label: formatPointTime(point.capturedAt, windowKey, imported) }));
   const indexes = new Set([0, Math.floor((points.length - 1) / 2), points.length - 1]);
   if (points.length > 8) {
     indexes.add(Math.floor((points.length - 1) * 0.25));
     indexes.add(Math.floor((points.length - 1) * 0.75));
   }
-  return [...indexes].sort((a, b) => a - b).map((index) => ({ x: points[index].x, label: formatPointTime(points[index].capturedAt, windowKey) }));
+  return [...indexes].sort((a, b) => a - b).map((index) => ({ x: points[index].x, label: formatPointTime(points[index].capturedAt, windowKey, imported) }));
 }
 
 function eventMarkers(events: AccountMetricEvent[], points: ChartPoint[]): ChartEvent[] {
@@ -138,8 +149,12 @@ export function AccountMetricTrendCard() {
   const [metricKey, setMetricKey] = useState<MetricKey>("totalKarma");
   const [state, setState] = useState<LoadState>("idle");
   const [history, setHistory] = useState<AccountMetricHistory | null>(null);
+  const [backfilledHistory, setBackfilledHistory] = useState<HistoricalPerformanceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+
+  const metric = metrics.find((item) => item.key === metricKey) ?? metrics[0];
+  const isBackfilled = metric.mode === "backfilled";
 
   useEffect(() => {
     let cancelled = false;
@@ -148,9 +163,13 @@ export function AccountMetricTrendCard() {
       setError(null);
       setActiveIndex(null);
       try {
-        const result = await fetchHistory(windowKey);
+        const [observed, imported] = await Promise.all([
+          fetchHistory(windowKey),
+          fetchBackfilledHistory().catch(() => null),
+        ]);
         if (!cancelled) {
-          setHistory(result);
+          setHistory(observed);
+          setBackfilledHistory(imported);
           setState("loaded");
         }
       } catch (loadError) {
@@ -164,27 +183,41 @@ export function AccountMetricTrendCard() {
     return () => { cancelled = true; };
   }, [windowKey]);
 
-  const metric = metrics.find((item) => item.key === metricKey) ?? metrics[0];
   const points = history?.points ?? [];
-  const events = history?.events ?? [];
+  const events = isBackfilled ? [] : history?.events ?? [];
   const current = latest(points);
   const start = first(points);
   const karmaDelta = current && start ? current.totalKarma - start.totalKarma : 0;
   const followerDelta = current?.followerCount !== null && current?.followerCount !== undefined && start?.followerCount !== null && start?.followerCount !== undefined ? current.followerCount - start.followerCount : null;
 
   const chartData = useMemo(() => {
-    const rows = points.map((point, index) => ({ point, index, value: metricValue(point, metricKey) })).filter((row): row is { point: AccountMetricPoint; index: number; value: number } => row.value !== null);
+    if (metricKey === "backfilledScore" || metricKey === "backfilledDailyScore") {
+      const importedPoints = backfilledHistory?.points ?? [];
+      const rows = importedPoints
+        .map((point, index) => ({ point, index, value: metricKey === "backfilledScore" ? point.cumulativeScore : point.scoreDelta }))
+        .filter((row) => Number.isFinite(row.value));
+      if (rows.length === 0) return { points: [] as ChartPoint[], scale: null as ChartScale | null };
+      const scale = chartScale(rows.map((row) => row.value));
+      const chartPoints = rows.map((row, index) => ({ index: row.index, capturedAt: `${row.point.date}T00:00:00.000Z`, value: row.value, x: xForIndex(index, rows.length), y: yForValue(row.value, scale) }));
+      return { points: chartPoints, scale };
+    }
+
+    if (!observedMetricKeys.has(metricKey)) return { points: [] as ChartPoint[], scale: null as ChartScale | null };
+    const rows = points.map((point, index) => ({ point, index, value: metricValue(point, metricKey as ObservedMetricKey) })).filter((row): row is { point: AccountMetricPoint; index: number; value: number } => row.value !== null);
     if (rows.length === 0) return { points: [] as ChartPoint[], scale: null as ChartScale | null };
     const scale = chartScale(rows.map((row) => row.value));
-    const chartPoints = rows.map((row, index) => ({ index: row.index, capturedAt: row.point.capturedAt, value: row.value, raw: row.point, x: xForIndex(index, rows.length), y: yForValue(row.value, scale) }));
+    const chartPoints = rows.map((row, index) => ({ index: row.index, capturedAt: row.point.capturedAt, value: row.value, x: xForIndex(index, rows.length), y: yForValue(row.value, scale) }));
     return { points: chartPoints, scale };
-  }, [metricKey, points]);
+  }, [backfilledHistory?.points, metricKey, points]);
 
   const activePoint = activeIndex === null ? null : chartData.points[activeIndex] ?? null;
   const path = useMemo(() => linePath(chartData.points), [chartData.points]);
   const area = useMemo(() => areaPath(chartData.points), [chartData.points]);
-  const xLabels = useMemo(() => xAxisLabels(chartData.points, windowKey), [chartData.points, windowKey]);
+  const xLabels = useMemo(() => xAxisLabels(chartData.points, windowKey, isBackfilled), [chartData.points, windowKey, isBackfilled]);
   const markers = useMemo(() => eventMarkers(events, chartData.points), [events, chartData.points]);
+  const importedLatest = backfilledHistory?.points.at(-1)?.cumulativeScore ?? null;
+  const importedFirst = backfilledHistory?.points[0]?.cumulativeScore ?? null;
+  const importedDelta = importedLatest !== null && importedFirst !== null ? importedLatest - importedFirst : null;
 
   function handlePointerMove(event: PointerEvent<SVGSVGElement>) {
     if (chartData.points.length === 0) return;
@@ -199,23 +232,28 @@ export function AccountMetricTrendCard() {
       <div className="mb-4 flex flex-col gap-3 xl:flex-row xl:items-start xl:justify-between">
         <div>
           <span className="ui-eyebrow">Account trend</span>
-          <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Karma and follower history</h2>
-          <p className={mutedClass}>Scheduled extension scans create points; markers show posts, scans, and growth spikes.</p>
+          <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Karma, followers and imported history</h2>
+          <p className={mutedClass}>Observed Reddit account karma/followers come from scheduled extension scans. Imported HTML snapshots power the backfilled score options.</p>
         </div>
         <div className="flex flex-wrap gap-2">
-          <div className="flex rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] p-1">
-            {windows.map((item) => <button className={item.key === windowKey ? "rounded-[10px] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] shadow-[var(--shadow-soft)]" : "rounded-[10px] px-3 py-2 text-sm font-extrabold text-[var(--text-muted)]"} key={item.key} type="button" onClick={() => setWindowKey(item.key)}>{item.label}</button>)}
-          </div>
+          {!isBackfilled ? (
+            <div className="flex rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] p-1">
+              {windows.map((item) => <button className={item.key === windowKey ? "rounded-[10px] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] shadow-[var(--shadow-soft)]" : "rounded-[10px] px-3 py-2 text-sm font-extrabold text-[var(--text-muted)]"} key={item.key} type="button" onClick={() => setWindowKey(item.key)}>{item.label}</button>)}
+            </div>
+          ) : null}
           <div className="flex flex-wrap rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] p-1">
-            {metrics.map((item) => <button className={item.key === metricKey ? "rounded-[10px] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] shadow-[var(--shadow-soft)]" : "rounded-[10px] px-3 py-2 text-sm font-extrabold text-[var(--text-muted)]"} key={item.key} type="button" onClick={() => setMetricKey(item.key)}>{item.label}</button>)}
+            {metrics.map((item) => <button className={item.key === metricKey ? "rounded-[10px] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] shadow-[var(--shadow-soft)]" : "rounded-[10px] px-3 py-2 text-sm font-extrabold text-[var(--text-muted)]"} key={item.key} type="button" onClick={() => { setMetricKey(item.key); setActiveIndex(null); }}>{item.label}</button>)}
           </div>
         </div>
       </div>
 
+      {isBackfilled ? <p className="mb-4 rounded-[14px] border border-[var(--border)] bg-[var(--surface-muted)] p-3 text-sm text-[var(--text-muted)]"><strong className="text-[var(--text)]">Backfilled score is not official Reddit account karma.</strong> It is a content-score estimate built from imported snapshots, post dates, comment dates, and later observed deltas. Followers remain scan-only unless we add a follower parser from profile snapshots.</p> : null}
+
       {state === "error" ? <p className="text-[var(--issue)]">{error}</p> : null}
       {state === "loading" ? <p className={mutedClass}>Loading account history…</p> : null}
-      {state === "loaded" && points.length === 0 ? <p className={mutedClass}>No scheduled profile metric points yet. Keep the dashboard open with the extension ready and the chart will fill in over time.</p> : null}
-      {state === "loaded" && points.length > 0 && chartData.points.length === 0 ? <p className={mutedClass}>No {metric.label.toLowerCase()} points found in this window yet.</p> : null}
+      {state === "loaded" && !isBackfilled && points.length === 0 ? <p className={mutedClass}>No scheduled profile metric points yet. Keep the dashboard open with the extension ready and the chart will fill in over time.</p> : null}
+      {state === "loaded" && isBackfilled && chartData.points.length === 0 ? <p className={mutedClass}>No imported historical score points yet. Import dated Reddit HTML/TXT snapshots from History Import.</p> : null}
+      {state === "loaded" && chartData.points.length === 0 && !isBackfilled ? <p className={mutedClass}>No {metric.label.toLowerCase()} points found in this window yet.</p> : null}
 
       {chartData.points.length > 0 && chartData.scale ? (
         <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_260px]">
@@ -234,12 +272,12 @@ export function AccountMetricTrendCard() {
               {chartData.points.map((point, index) => <circle key={`${point.capturedAt}-${point.value}`} cx={point.x} cy={point.y} r={activeIndex === index ? 6 : 4} fill="var(--surface)" stroke="var(--accent)" strokeWidth={activeIndex === index ? 4 : 3} />)}
               {activePoint ? <g><line x1={activePoint.x} x2={activePoint.x} y1={plot.top} y2={plot.bottom} stroke="var(--accent)" strokeWidth="1.5" strokeDasharray="5 5" /><circle cx={activePoint.x} cy={activePoint.y} r="8" fill="var(--accent)" opacity="0.18" /></g> : null}
             </svg>
-            {activePoint ? <div className="pointer-events-none absolute z-10 min-w-[190px] rounded-[16px] border border-[var(--border-strong)] bg-[var(--surface)] p-3 text-sm shadow-[var(--shadow-soft)]" style={{ left: `${Math.min(78, Math.max(8, (activePoint.x / chart.width) * 100))}%`, top: `${Math.min(68, Math.max(10, (activePoint.y / chart.height) * 100))}%` }}><span className="block text-xs font-extrabold tracking-widest text-[var(--text-muted)] uppercase">{formatPointTime(activePoint.capturedAt, windowKey)}</span><strong className="mt-1 block text-xl text-[var(--text)]">{compactNumber(activePoint.value)}</strong><span className="mt-1 block text-[var(--text-muted)]">{metric.label}</span></div> : null}
+            {activePoint ? <div className="pointer-events-none absolute z-10 min-w-[190px] rounded-[16px] border border-[var(--border-strong)] bg-[var(--surface)] p-3 text-sm shadow-[var(--shadow-soft)]" style={{ left: `${Math.min(78, Math.max(8, (activePoint.x / chart.width) * 100))}%`, top: `${Math.min(68, Math.max(10, (activePoint.y / chart.height) * 100))}%` }}><span className="block text-xs font-extrabold tracking-widest text-[var(--text-muted)] uppercase">{formatPointTime(activePoint.capturedAt, windowKey, isBackfilled)}</span><strong className="mt-1 block text-xl text-[var(--text)]">{compactNumber(activePoint.value)}</strong><span className="mt-1 block text-[var(--text-muted)]">{metric.label}</span></div> : null}
           </div>
           <div className="grid gap-3 content-start">
-            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Total karma</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{compactNumber(current?.totalKarma ?? 0)}</strong><small className={karmaDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(karmaDelta)} in window</small></div>
-            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Followers</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{current?.followerCount === null || current?.followerCount === undefined ? "N/A" : compactNumber(current.followerCount)}</strong>{followerDelta === null ? <small className="text-[var(--text-muted)]">Waiting for extension follower scrape.</small> : <small className={followerDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(followerDelta)} in window</small>}</div>
-            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Markers</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{markers.length}</strong><small className="text-[var(--text-muted)]">Posts, scans, and detected spikes in this window.</small></div>
+            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Total karma</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{compactNumber(current?.totalKarma ?? 0)}</strong><small className={karmaDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(karmaDelta)} in observed window</small></div>
+            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Followers</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{current?.followerCount === null || current?.followerCount === undefined ? "N/A" : compactNumber(current.followerCount)}</strong>{followerDelta === null ? <small className="text-[var(--text-muted)]">Follower count is scan-only for now.</small> : <small className={followerDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(followerDelta)} in observed window</small>}</div>
+            <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Backfilled score</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{importedLatest === null ? "N/A" : compactNumber(importedLatest)}</strong><small className={importedDelta === null || importedDelta >= 0 ? "text-[var(--text-muted)]" : "text-[var(--issue)]"}>{importedDelta === null ? "Import snapshots to populate." : `${formatDelta(importedDelta)} across imported history`}</small></div>
           </div>
         </div>
       ) : null}
