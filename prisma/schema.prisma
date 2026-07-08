@@ -34,7 +34,6 @@ model User {
   authAccounts     Account[]
   redditAccounts   RedditAccount[]
   postDeepDiveJobs PostDeepDiveJob[]
-  dareCompletions  DareCompletion[]
 
   @@map("user")
 }
@@ -129,7 +128,6 @@ model RedditAccount {
   scans           AccountScan[]
   metricSnapshots AccountMetricSnapshot[]
   plannerJobs     PlannerJob[]
-  dareCompletions DareCompletion[]
 
   @@unique([ownerUserId, username])
   @@index([ownerUserId])
@@ -165,7 +163,6 @@ model AccountScan {
   mediaGroups          MediaGroup[]
   metricSnapshots      AccountMetricSnapshot[]
   plannerJobs          PlannerJob[]
-  dareCompletions      DareCompletion[]
 
   @@index([accountId, fetchedAt])
   @@index([source])
@@ -220,6 +217,9 @@ model PostSnapshot {
   refreshedUpvoteRatio Float?
   estimatedUpvotes     Int?
   estimatedDownvotes   Int?
+  latestViewCount      Int?
+  latestShareCount     Int?
+  latestInsightAt      DateTime?
   createdAt            DateTime @default(now())
 
   scan             AccountScan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
@@ -344,11 +344,16 @@ model PostMetricSnapshot {
   upvoteRatio        Float?
   estimatedUpvotes   Int?
   estimatedDownvotes Int?
+  viewCount          Int?
+  shareCount         Int?
+  insightSource      String?
+  insightRaw         Json?
   capturedAt         DateTime @default(now())
 
   post PostSnapshot @relation(fields: [postSnapshotId], references: [id], onDelete: Cascade)
 
   @@index([postSnapshotId, capturedAt])
+  @@index([viewCount])
 }
 
 model PostThreadComment {
