@@ -9,6 +9,10 @@ export type SavedScan = {
   scanId: string;
 };
 
+export type SaveAccountScanOptions = {
+  enqueueDeepDiveJobs?: boolean;
+};
+
 type MediaGroupAccumulator = {
   mediaKey: string;
   postCount: number;
@@ -136,7 +140,7 @@ async function enqueuePostDeepDiveJobs(scanId: string, ownerId?: string): Promis
   });
 }
 
-export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics, ownerId?: string): Promise<SavedScan> {
+export async function saveAccountScan(data: RedditAccountData, analytics: AccountAnalytics, ownerId?: string, options: SaveAccountScanOptions = {}): Promise<SavedScan> {
   const subredditLookup = await upsertSubreddits(uniqueSubreddits(data, analytics));
   const existing = await prisma.redditAccount.findFirst({
     where: {
@@ -145,34 +149,29 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
     },
   });
 
+  const profileData = {
+    redditId: data.profile.id,
+    createdUtc: data.profile.createdUtc,
+    totalKarma: data.profile.totalKarma,
+    linkKarma: data.profile.linkKarma,
+    commentKarma: data.profile.commentKarma,
+    awardeeKarma: data.profile.awardeeKarma,
+    awarderKarma: data.profile.awarderKarma,
+    followerCount: data.profile.followerCount ?? null,
+    over18: data.profile.over18,
+    iconUrl: data.profile.iconUrl,
+  };
+
   const account = existing
     ? await prisma.redditAccount.update({
         where: { id: existing.id },
-        data: {
-          redditId: data.profile.id,
-          createdUtc: data.profile.createdUtc,
-          totalKarma: data.profile.totalKarma,
-          linkKarma: data.profile.linkKarma,
-          commentKarma: data.profile.commentKarma,
-          awardeeKarma: data.profile.awardeeKarma,
-          awarderKarma: data.profile.awarderKarma,
-          over18: data.profile.over18,
-          iconUrl: data.profile.iconUrl,
-        },
+        data: profileData,
       })
     : await prisma.redditAccount.create({
         data: {
           ownerUserId: ownerId,
-          redditId: data.profile.id,
           username: data.profile.username,
-          createdUtc: data.profile.createdUtc,
-          totalKarma: data.profile.totalKarma,
-          linkKarma: data.profile.linkKarma,
-          commentKarma: data.profile.commentKarma,
-          awardeeKarma: data.profile.awardeeKarma,
-          awarderKarma: data.profile.awarderKarma,
-          over18: data.profile.over18,
-          iconUrl: data.profile.iconUrl,
+          ...profileData,
         },
       });
 
@@ -201,6 +200,20 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
       warnings: toInputJson(data.warnings),
       metadata: data.metadata ? toInputJson(data.metadata) : undefined,
       analytics: toInputJson(analytics),
+    },
+  });
+
+  await prisma.accountMetricSnapshot.create({
+    data: {
+      accountId: account.id,
+      scanId: scan.id,
+      source: data.source,
+      totalKarma: data.profile.totalKarma,
+      linkKarma: data.profile.linkKarma,
+      commentKarma: data.profile.commentKarma,
+      awardeeKarma: data.profile.awardeeKarma,
+      awarderKarma: data.profile.awarderKarma,
+      followerCount: data.profile.followerCount ?? null,
     },
   });
 
@@ -265,7 +278,9 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
     skipDuplicates: true,
   });
 
-  await enqueuePostDeepDiveJobs(scan.id, ownerId);
+  if (options.enqueueDeepDiveJobs ?? true) {
+    await enqueuePostDeepDiveJobs(scan.id, ownerId);
+  }
 
   return {
     accountId: account.id,
