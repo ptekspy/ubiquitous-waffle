@@ -4,11 +4,10 @@ import { useEffect, useState } from "react";
 
 import { AppShell } from "@/components/app-shell";
 import { AuthGate } from "@/components/auth-gate";
-import { BrowserPostCrawler } from "@/components/browser-post-crawler";
-import { BrowserProfileScheduler } from "@/components/browser-profile-scheduler";
 import { Dashboard } from "@/components/dashboard";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorCard } from "@/components/error-card";
+import { LocalExtensionJobQueue } from "@/components/local-extension-job-queue";
 import { ManualImportCard } from "@/components/manual-import-card";
 import { ScanSetupCard } from "@/components/scan-setup-card";
 import { UserMenu } from "@/components/user-menu";
@@ -199,8 +198,6 @@ function AuthenticatedDashboard() {
 
   return (
     <AppShell>
-      <BrowserPostCrawler scanId={data?.scanId ?? null} extensionState={extensionState} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
-      <BrowserProfileScheduler username={username} extensionState={extensionState} onImported={acceptBrowserScheduledScan} onStatus={setExtensionMessage} />
       <UserMenu />
       <WorkspaceHeader data={data} />
 
@@ -219,6 +216,8 @@ function AuthenticatedDashboard() {
         onScan={scanWithExtension}
         onTryPublicJson={analysePublicJson}
       />
+
+      <LocalExtensionJobQueue username={username} extensionState={extensionState} scanId={data?.scanId ?? null} onImported={acceptBrowserScheduledScan} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
 
       {data ? <Dashboard data={data} /> : <EmptyState />}
 
