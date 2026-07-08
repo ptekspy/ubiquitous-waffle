@@ -9,6 +9,7 @@ import { EmptyState } from "@/components/empty-state";
 import { ErrorCard } from "@/components/error-card";
 import { LocalExtensionJobQueue } from "@/components/local-extension-job-queue";
 import { ManualImportCard } from "@/components/manual-import-card";
+import { ProductOpsPanel } from "@/components/product-ops-panel";
 import { ScanSetupCard } from "@/components/scan-setup-card";
 import { UserMenu } from "@/components/user-menu";
 import { WorkspaceHeader } from "@/components/workspace-header";
@@ -216,6 +217,8 @@ function AuthenticatedDashboard() {
         onScan={scanWithExtension}
         onTryPublicJson={analysePublicJson}
       />
+
+      <ProductOpsPanel extensionState={extensionState} extensionVersion={extensionVersion} username={username} />
 
       <LocalExtensionJobQueue username={username} extensionState={extensionState} scanId={data?.scanId ?? null} onImported={acceptBrowserScheduledScan} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
 
