@@ -87,6 +87,100 @@ export type BrowserCrawlerImportResult =
       error: string;
     };
 
+export type IdleCrawlerTarget = {
+  id: string;
+  kind: "SUBREDDIT_FEED" | "HOME_FEED" | "USER_PROFILE";
+  label: string;
+  subreddit: string | null;
+  username: string | null;
+  feed: string;
+  forced: boolean;
+};
+
+export type IdleCrawlerClaimResult =
+  | {
+      ok: true;
+      target: IdleCrawlerTarget | null;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+export type IdleCrawlerImportResult =
+  | {
+      ok: true;
+      posts?: number;
+      comments?: number;
+      users?: number;
+      failed?: boolean;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
+export type IdleCrawlerSummary = {
+  generatedAt: string;
+  counts: {
+    targets: number;
+    dueTargets: number;
+    collectedUsers: number;
+    posts: number;
+    comments: number;
+  };
+  targets: Array<{
+    id: string;
+    kind: string;
+    label: string;
+    subreddit: string | null;
+    username: string | null;
+    feed: string;
+    priority: number;
+    enabled: boolean;
+    lastCompletedAt: string | null;
+    nextDueAt: string | null;
+    lastStatus: string | null;
+    lastError: string | null;
+    lastPostCount: number;
+    lastCommentCount: number;
+  }>;
+  posts: Array<{
+    id: string;
+    redditId: string;
+    title: string;
+    subreddit: string;
+    author: string | null;
+    permalink: string;
+    feed: string;
+    score: number;
+    numComments: number;
+    lastSeenAt: string;
+  }>;
+  users: Array<{
+    id: string;
+    username: string;
+    source: string | null;
+    postMentions: number;
+    commentMentions: number;
+    latestScore: number | null;
+    latestFollowers: number | null;
+    lastSeenAt: string;
+    lastProfileCrawledAt: string | null;
+    nextProfileCrawlAt: string | null;
+  }>;
+};
+
+export type IdleCrawlerSummaryResult =
+  | {
+      ok: true;
+      data: IdleCrawlerSummary;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 export async function fetchCurrentUser(): Promise<CurrentUserApiResult> {
   try {
     const response = await fetch(`/api/me?ts=${Date.now()}`, { cache: "no-store" });
@@ -136,6 +230,62 @@ export async function importBrowserCrawlerPayload(jobId: string, payload: unknow
     return { ok: true, comments: responsePayload.comments };
   } catch {
     return { ok: false, error: "The browser crawler import failed before the API could respond." };
+  }
+}
+
+export async function claimIdleCrawlerTarget(): Promise<IdleCrawlerClaimResult> {
+  try {
+    const response = await fetch(`/api/crawler/idle/next?ts=${Date.now()}`, { cache: "no-store" });
+    const payload = await readJsonResponse<{ target: IdleCrawlerTarget | null }, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(payload)) return { ok: false, error: payload.error };
+    return { ok: true, target: payload.target };
+  } catch {
+    return { ok: false, error: "The idle crawler claim failed before the API could respond." };
+  }
+}
+
+export async function importIdleCrawlerPayload(targetId: string, payload: unknown): Promise<IdleCrawlerImportResult> {
+  try {
+    const response = await fetch("/api/crawler/idle/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetId, payload }),
+    });
+    const responsePayload = await readJsonResponse<{ ok: true; posts: number; comments: number; users: number }, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(responsePayload)) return { ok: false, error: responsePayload.error };
+    return { ok: true, posts: responsePayload.posts, comments: responsePayload.comments, users: responsePayload.users };
+  } catch {
+    return { ok: false, error: "The idle crawler import failed before the API could respond." };
+  }
+}
+
+export async function reportIdleCrawlerFailure(targetId: string, error: string): Promise<IdleCrawlerImportResult> {
+  try {
+    const response = await fetch("/api/crawler/idle/import", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ targetId, error }),
+    });
+    const responsePayload = await readJsonResponse<{ ok: true; failed: true }, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(responsePayload)) return { ok: false, error: responsePayload.error };
+    return { ok: true, failed: true };
+  } catch {
+    return { ok: false, error: "The idle crawler failure report failed before the API could respond." };
+  }
+}
+
+export async function fetchIdleCrawlerSummary(): Promise<IdleCrawlerSummaryResult> {
+  try {
+    const response = await fetch(`/api/crawler/idle/summary?ts=${Date.now()}`, { cache: "no-store" });
+    const payload = await readJsonResponse<IdleCrawlerSummary, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(payload)) return { ok: false, error: payload.error };
+    return { ok: true, data: payload };
+  } catch {
+    return { ok: false, error: "The idle crawler summary request failed before the API could respond." };
   }
 }
 
