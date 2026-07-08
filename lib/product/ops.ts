@@ -55,7 +55,7 @@ function asInt(value: unknown, fallback: number): number {
 }
 
 function cleanName(value: string): string {
-  return value.trim().replace(/^r\//i, "").replace(/^u\//i, "").replace(/^@/, "");
+  return String(value ?? "").trim().replace(/^r\//i, "").replace(/^u\//i, "").replace(/^@/, "");
 }
 
 function cleanText(value: unknown, fallback = ""): string {
@@ -73,15 +73,11 @@ function warningCount(value: Prisma.JsonValue | null): number {
 }
 
 async function ensureSettings(ownerUserId: string): Promise<ProductOpsSettings> {
-  const rows = await prisma.$queryRaw<SettingsRow[]>`
-    SELECT * FROM "WorkspaceSetting" WHERE "ownerUserId" = ${ownerUserId} LIMIT 1
-  `;
-
+  const rows = await prisma.$queryRaw<SettingsRow[]>`SELECT * FROM "WorkspaceSetting" WHERE "ownerUserId" = ${ownerUserId} LIMIT 1`;
   if (rows[0]) return rows[0];
 
-  const id = randomUUID();
   const inserted = await prisma.$queryRaw<SettingsRow[]>`
-    INSERT INTO "WorkspaceSetting" ("id", "ownerUserId") VALUES (${id}, ${ownerUserId})
+    INSERT INTO "WorkspaceSetting" ("id", "ownerUserId") VALUES (${randomUUID()}, ${ownerUserId})
     RETURNING *
   `;
   return inserted[0];
@@ -91,7 +87,6 @@ async function activeAccount(ownerUserId: string, settings: ProductOpsSettings) 
   const account = settings.activeAccountId
     ? await prisma.redditAccount.findFirst({ where: { id: settings.activeAccountId, ownerUserId }, select: { id: true, username: true, totalKarma: true, followerCount: true } })
     : null;
-
   return account ?? prisma.redditAccount.findFirst({ where: { ownerUserId }, orderBy: { updatedAt: "desc" }, select: { id: true, username: true, totalKarma: true, followerCount: true } });
 }
 
@@ -117,6 +112,22 @@ async function plannedPosts(ownerUserId: string): Promise<ProductOpsResponse["pl
   return rows.map((row) => ({ ...row, plannedFor: iso(row.plannedFor) }));
 }
 
+async function bestHourForSubreddit(accountId: string, subreddit: string): Promise<number | null> {
+  const posts = await prisma.postSnapshot.findMany({ where: { accountId, subreddit: { equals: subreddit, mode: "insensitive" } }, select: { createdUtc: true, score: true } });
+  if (posts.length === 0) return null;
+
+  const buckets = new Map<number, { score: number; count: number }>();
+  for (const post of posts) {
+    const hour = new Date(post.createdUtc * 1000).getUTCHours();
+    const bucket = buckets.get(hour) ?? { score: 0, count: 0 };
+    bucket.score += post.score;
+    bucket.count += 1;
+    buckets.set(hour, bucket);
+  }
+
+  return [...buckets.entries()].sort((a, b) => b[1].score / b[1].count - a[1].score / a[1].count)[0]?.[0] ?? null;
+}
+
 async function trackedSubreddits(ownerUserId: string, accountId: string | null): Promise<ProductOpsResponse["trackedSubreddits"]> {
   const rows = await prisma.$queryRaw<TrackedSubredditRow[]>`
     SELECT "id", "subreddit", "enabled", "notes"
@@ -127,8 +138,7 @@ async function trackedSubreddits(ownerUserId: string, accountId: string | null):
 
   return Promise.all(rows.map(async (row) => {
     const stats = accountId ? await prisma.subredditSnapshot.findFirst({ where: { accountId, subreddit: { equals: row.subreddit, mode: "insensitive" } }, orderBy: { createdAt: "desc" }, select: { posts: true, averagePostScore: true } }) : null;
-    const bestHour = accountId ? await prisma.postSnapshot.groupBy({ by: ["createdUtc"], where: { accountId, subreddit: { equals: row.subreddit, mode: "insensitive" } }, _avg: { score: true }, orderBy: { _avg: { score: "desc" } }, take: 1 }).catch(() => []) : [];
-    const bestHourUtc = bestHour[0] ? new Date(bestHour[0].createdUtc * 1000).getUTCHours() : null;
+    const bestHourUtc = accountId ? await bestHourForSubreddit(accountId, row.subreddit) : null;
     return { ...row, posts: stats?.posts ?? 0, averageScore: Math.round(stats?.averagePostScore ?? 0), bestHourUtc };
   }));
 }
@@ -168,7 +178,7 @@ async function buildChanges(accountId: string | null): Promise<ProductOpsRespons
 
 async function health(ownerUserId: string, accountId: string | null): Promise<ProductOpsResponse["health"]> {
   const latestScan = accountId ? await prisma.accountScan.findFirst({ where: { accountId }, orderBy: { fetchedAt: "desc" }, select: { fetchedAt: true } }) : null;
-  const latestMetric = accountId ? await prisma.accountMetricSnapshot.findFirst({ where: { accountId }, orderBy: { capturedAt: "desc" }, select: { capturedAt: true, followerCount: true } }) : null;
+  const latestMetric = accountId ? await prisma.accountMetricSnapshot.findFirst({ where: { accountId }, orderBy: { capturedAt: "desc" }, select: { followerCount: true } }) : null;
   const deepDive = await prisma.postDeepDiveJob.groupBy({ by: ["status"], where: { ownerUserId }, _count: { _all: true } }).catch(() => []);
   const planner = accountId ? await prisma.plannerJob.groupBy({ by: ["status"], where: { accountId }, _count: { _all: true } }).catch(() => []) : [];
   const queuedDeepDives = deepDive.find((row) => row.status === "QUEUED")?._count._all ?? 0;
@@ -208,35 +218,13 @@ export async function getProductOps(ownerUserId: string): Promise<ProductOpsResp
   const settings = await ensureSettings(ownerUserId);
   const [accounts, account] = await Promise.all([accountList(ownerUserId), activeAccount(ownerUserId, settings)]);
   const accountId = account?.id ?? null;
-  const [scans, plans, subreddits, peers, changes, healthRows, insights] = await Promise.all([
-    scanHistory(accountId),
-    plannedPosts(ownerUserId),
-    trackedSubreddits(ownerUserId, accountId),
-    trackedPeers(ownerUserId),
-    buildChanges(accountId),
-    health(ownerUserId, accountId),
-    getDashboardInsights(ownerUserId).catch(() => null),
-  ]);
-
+  const [scans, plans, subreddits, peers, changes, healthRows, insights] = await Promise.all([scanHistory(accountId), plannedPosts(ownerUserId), trackedSubreddits(ownerUserId, accountId), trackedPeers(ownerUserId), buildChanges(accountId), health(ownerUserId, accountId), getDashboardInsights(ownerUserId).catch(() => null)]);
   const hasMetric = accountId ? await prisma.accountMetricSnapshot.count({ where: { accountId } }) > 0 : false;
   const hasFollower = accountId ? await prisma.accountMetricSnapshot.count({ where: { accountId, followerCount: { not: null } } }) > 0 : false;
   const hasPlanner = accountId ? await prisma.plannerJob.count({ where: { accountId } }) > 0 : false;
   const allChanges = [...(insights?.insights.map((insight) => ({ title: insight.title, detail: insight.detail, severity: insight.severity, timestamp: insight.timestamp })) ?? []), ...changes].slice(0, 8);
 
-  return {
-    generatedAt: new Date().toISOString(),
-    settings,
-    accounts,
-    activeAccount: account,
-    onboarding: onboarding({ hasAccount: Boolean(account), hasScan: scans.length > 0, hasMetric, hasFollower, hasPlanner, hasPlannedPost: plans.length > 0, hasTracked: subreddits.length > 0 || peers.length > 0 }),
-    health: healthRows,
-    changes: allChanges,
-    scans,
-    plannedPosts: plans,
-    trackedSubreddits: subreddits,
-    trackedPeers: peers,
-    weeklyReport: weeklyReport({ account, changes: allChanges, scans, plannedPosts: plans }),
-  };
+  return { generatedAt: new Date().toISOString(), settings, accounts, activeAccount: account, onboarding: onboarding({ hasAccount: Boolean(account), hasScan: scans.length > 0, hasMetric, hasFollower, hasPlanner, hasPlannedPost: plans.length > 0, hasTracked: subreddits.length > 0 || peers.length > 0 }), health: healthRows, changes: allChanges, scans, plannedPosts: plans, trackedSubreddits: subreddits, trackedPeers: peers, weeklyReport: weeklyReport({ account, changes: allChanges, scans, plannedPosts: plans }) };
 }
 
 export async function handleProductOpsAction(ownerUserId: string, action: ProductOpsAction): Promise<ProductOpsResponse> {
@@ -272,8 +260,8 @@ export async function handleProductOpsAction(ownerUserId: string, action: Produc
     await prisma.$executeRaw`
       UPDATE "PlannedPost"
       SET "status" = COALESCE(${action.status ?? null}, "status"),
-          "actualScore" = ${action.actualScore ?? null},
-          "actualFollowerGain" = ${action.actualFollowerGain ?? null},
+          "actualScore" = COALESCE(${action.actualScore ?? null}, "actualScore"),
+          "actualFollowerGain" = COALESCE(${action.actualFollowerGain ?? null}, "actualFollowerGain"),
           "notes" = COALESCE(${action.notes ?? null}, "notes"),
           "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}
@@ -307,7 +295,7 @@ export async function handleProductOpsAction(ownerUserId: string, action: Produc
   if (action.action === "peer:update") {
     await prisma.$executeRaw`
       UPDATE "TrackedPeerAccount"
-      SET "enabled" = COALESCE(${action.enabled ?? null}, "enabled"), "latestScore" = ${action.latestScore ?? null}, "latestFollowers" = ${action.latestFollowers ?? null}, "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP
+      SET "enabled" = COALESCE(${action.enabled ?? null}, "enabled"), "latestScore" = COALESCE(${action.latestScore ?? null}, "latestScore"), "latestFollowers" = COALESCE(${action.latestFollowers ?? null}, "latestFollowers"), "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}
     `;
   }
@@ -316,7 +304,7 @@ export async function handleProductOpsAction(ownerUserId: string, action: Produc
     const ops = await getProductOps(ownerUserId);
     await prisma.$executeRaw`
       INSERT INTO "WeeklyReport" ("id", "ownerUserId", "accountId", "weekStart", "weekEnd", "title", "summary")
-      VALUES (${randomUUID()}, ${ownerUserId}, ${ops.activeAccount?.id ?? null}, ${new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)}, ${new Date()}, ${ops.weeklyReport.title}, ${JSON.stringify(ops.weeklyReport) as unknown as Prisma.JsonObject})
+      VALUES (${randomUUID()}, ${ownerUserId}, ${ops.activeAccount?.id ?? null}, ${new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)}, ${new Date()}, ${ops.weeklyReport.title}, ${JSON.stringify(ops.weeklyReport)}::jsonb)
     `;
   }
 
