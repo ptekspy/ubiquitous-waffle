@@ -2,7 +2,14 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 
-import { claimBrowserCrawlerJob, importBrowserCrawlerPayload, importBrowserPayload } from "@/lib/api/client";
+import {
+  claimBrowserCrawlerJob,
+  claimIdleCrawlerTarget,
+  importBrowserCrawlerPayload,
+  importBrowserPayload,
+  importIdleCrawlerPayload,
+  reportIdleCrawlerFailure,
+} from "@/lib/api/client";
 import { sendExtensionMessage } from "@/lib/extension/client";
 import type { ExtensionScanResponse, ExtensionState } from "@/lib/extension/types";
 import type { AnalyzeResponse } from "@/lib/types";
@@ -27,9 +34,11 @@ type QueueSettings = {
   profileScanInterval: number;
   deepDiveInterval: number;
   deepDiveBatchSize: number;
+  idleCrawlInterval: number;
+  idleCrawlBatchSize: number;
 };
 
-type JobKey = "profile" | "deepDive";
+type JobKey = "profile" | "deepDive" | "idleCrawl";
 type JobStatus = "waiting" | "running" | "success" | "error";
 
 type JobView = {
@@ -46,7 +55,10 @@ type JobView = {
 const DEFAULT_PROFILE_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_DEEP_DIVE_INTERVAL_MS = 2 * 60 * 60 * 1000;
 const DEFAULT_DEEP_DIVE_BATCH_SIZE = 50;
+const DEFAULT_IDLE_CRAWL_INTERVAL_MS = 30 * 1000;
+const DEFAULT_IDLE_CRAWL_BATCH_SIZE = 3;
 const MAX_DEEP_DIVE_RUN_ALL = 500;
+const MAX_IDLE_CRAWL_RUN_ALL = 25;
 const TICK_MS = 1000;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
 
@@ -60,18 +72,23 @@ function defaultSettings(): QueueSettings {
     profileScanInterval: envInterval(process.env.NEXT_PUBLIC_PROFILE_SCAN_INTERVAL_MS, DEFAULT_PROFILE_INTERVAL_MS),
     deepDiveInterval: envInterval(process.env.NEXT_PUBLIC_DEEP_DIVE_REFRESH_INTERVAL_MS, DEFAULT_DEEP_DIVE_INTERVAL_MS),
     deepDiveBatchSize: DEFAULT_DEEP_DIVE_BATCH_SIZE,
+    idleCrawlInterval: envInterval(process.env.NEXT_PUBLIC_IDLE_CRAWL_INTERVAL_MS, DEFAULT_IDLE_CRAWL_INTERVAL_MS),
+    idleCrawlBatchSize: envInterval(process.env.NEXT_PUBLIC_IDLE_CRAWL_BATCH_SIZE, DEFAULT_IDLE_CRAWL_BATCH_SIZE),
   };
 }
 
 async function fetchQueueSettings(): Promise<QueueSettings> {
+  const fallback = defaultSettings();
   const response = await fetch(`/api/product/ops?ts=${Date.now()}`, { cache: "no-store" });
-  if (!response.ok) return defaultSettings();
+  if (!response.ok) return fallback;
   const payload = await response.json();
   const settings = payload?.settings ?? {};
   return {
-    profileScanInterval: envInterval(String(settings.profileScanInterval ?? ""), defaultSettings().profileScanInterval),
-    deepDiveInterval: envInterval(String(settings.deepDiveInterval ?? ""), defaultSettings().deepDiveInterval),
-    deepDiveBatchSize: envInterval(String(settings.deepDiveBatchSize ?? ""), defaultSettings().deepDiveBatchSize),
+    profileScanInterval: envInterval(String(settings.profileScanInterval ?? ""), fallback.profileScanInterval),
+    deepDiveInterval: envInterval(String(settings.deepDiveInterval ?? ""), fallback.deepDiveInterval),
+    deepDiveBatchSize: envInterval(String(settings.deepDiveBatchSize ?? ""), fallback.deepDiveBatchSize),
+    idleCrawlInterval: fallback.idleCrawlInterval,
+    idleCrawlBatchSize: fallback.idleCrawlBatchSize,
   };
 }
 
@@ -110,6 +127,7 @@ function duration(ms: number | null | undefined): string {
 function initialJobs(username: string, settings: QueueSettings): JobView[] {
   const profileLast = readLastRun(username, "profile");
   const deepLast = readLastRun(username, "deepDive");
+  const idleLast = readLastRun(username, "idleCrawl");
 
   return [
     {
@@ -130,6 +148,16 @@ function initialJobs(username: string, settings: QueueSettings): JobView[] {
       lastRunAt: deepLast,
       status: "waiting",
       detail: "Refreshes post scores, comment counts, replies, and thread comments through the extension.",
+      lastDurationMs: null,
+    },
+    {
+      key: "idleCrawl",
+      title: "Idle crawler",
+      cadenceMs: settings.idleCrawlInterval,
+      nextRunAt: nextRunAt(idleLast, settings.idleCrawlInterval),
+      lastRunAt: idleLast,
+      status: "waiting",
+      detail: "When no priority work is due, crawls active subreddit feeds, home feeds, and collected users for more data.",
       lastDurationMs: null,
     },
   ];
@@ -186,9 +214,15 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     setJobs((current) => current.map((job) => (job.key === key ? { ...job, ...patch } : job)));
   }
 
+  function cadenceFor(key: JobKey): number {
+    if (key === "profile") return settingsRef.current.profileScanInterval;
+    if (key === "deepDive") return settingsRef.current.deepDiveInterval;
+    return settingsRef.current.idleCrawlInterval;
+  }
+
   function markDone(key: JobKey, detail: string, startedAt: number) {
     const usernameValue = usernameRef.current;
-    const cadence = key === "profile" ? settingsRef.current.profileScanInterval : settingsRef.current.deepDiveInterval;
+    const cadence = cadenceFor(key);
     const completedAt = Date.now();
     writeLastRun(usernameValue, key, completedAt);
     updateJob(key, {
@@ -297,7 +331,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
       if (completed > 0) await refreshRef.current();
       const suffix = runAllDue && !exhausted && completed >= MAX_DEEP_DIVE_RUN_ALL ? ` Hit the safety cap of ${MAX_DEEP_DIVE_RUN_ALL}; run again to continue.` : "";
-      const detail = completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.${suffix}` : "No post deep dives were due.";
+      const detail = completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.${suffix}` : "No post deep dives were due; idle crawler can use the browser next.";
       markDone("deepDive", detail, startedAt);
       statusRef.current(detail);
     } finally {
@@ -305,15 +339,80 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     }
   }
 
+  async function runIdleCrawlJob(runMany = false) {
+    const startedAt = Date.now();
+    const limit = runMany ? MAX_IDLE_CRAWL_RUN_ALL : Math.max(1, settingsRef.current.idleCrawlBatchSize);
+    runningRef.current = "idleCrawl";
+    updateJob("idleCrawl", { status: "running", detail: `Claiming up to ${limit} idle crawl target${limit === 1 ? "" : "s"}.` });
+    statusRef.current(`Running idle crawler batch of up to ${limit}.`);
+
+    let completed = 0;
+    let posts = 0;
+    let comments = 0;
+    let users = 0;
+
+    try {
+      for (let index = 0; index < limit; index += 1) {
+        const claim = await claimIdleCrawlerTarget();
+        if (!claim.ok) {
+          updateJob("idleCrawl", { status: "error", detail: claim.error, lastDurationMs: Date.now() - startedAt });
+          statusRef.current(claim.error);
+          return;
+        }
+
+        if (!claim.target) break;
+
+        updateJob("idleCrawl", { status: "running", detail: `Idle crawling ${completed + 1}/${limit} · ${claim.target.label}${claim.target.forced ? " · filler" : ""}` });
+        statusRef.current(`Idle crawling ${claim.target.label}${claim.target.forced ? " as filler" : ""}.`);
+
+        const response = await sendExtensionMessage<ExtensionCrawlerResponse>({
+          type: "PAIDPOLITELY_CRAWL_REDDIT_TARGET",
+          target: claim.target,
+        } as never);
+
+        if (!response.ok) {
+          await reportIdleCrawlerFailure(claim.target.id, response.error);
+          updateJob("idleCrawl", { status: "error", detail: response.error, lastDurationMs: Date.now() - startedAt });
+          statusRef.current(response.error);
+          return;
+        }
+
+        const imported = await importIdleCrawlerPayload(claim.target.id, response.payload);
+        if (!imported.ok) {
+          updateJob("idleCrawl", { status: "error", detail: imported.error, lastDurationMs: Date.now() - startedAt });
+          statusRef.current(imported.error);
+          return;
+        }
+
+        completed += 1;
+        posts += imported.posts ?? 0;
+        comments += imported.comments ?? 0;
+        users += imported.users ?? 0;
+      }
+
+      const detail = completed > 0 ? `Idle crawled ${completed} target${completed === 1 ? "" : "s"}; saved ${posts} posts, ${comments} comments, and ${users} users.` : "No idle crawl targets were available.";
+      markDone("idleCrawl", detail, startedAt);
+      statusRef.current(detail);
+      window.dispatchEvent(new Event("paidpolitely-idle-crawler-refresh"));
+    } finally {
+      runningRef.current = null;
+    }
+  }
+
   function runNow(key: JobKey) {
     if (!isReady || runningRef.current) return;
-    updateJob(key, { nextRunAt: Date.now(), status: "waiting", detail: key === "profile" ? "Manual profile scan requested." : "Manual deep-dive batch requested." });
+    updateJob(key, { nextRunAt: Date.now(), status: "waiting", detail: key === "profile" ? "Manual profile scan requested." : key === "deepDive" ? "Manual deep-dive batch requested." : "Manual idle crawl requested." });
     setNow(Date.now());
   }
 
   function runAllDueDeepDives() {
     if (!isReady || runningRef.current || !scanId) return;
     void runDeepDiveJob(true);
+  }
+
+  function runIdleSweep() {
+    if (!isReady || runningRef.current) return;
+    void runIdleCrawlJob(true);
   }
 
   useEffect(() => {
@@ -328,11 +427,12 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
     if (due.key === "profile") void runProfileJob();
     if (due.key === "deepDive") void runDeepDiveJob(false);
+    if (due.key === "idleCrawl") void runIdleCrawlJob(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady, jobs, now, scanId]);
 
   const activeJob = jobs.find((job) => job.status === "running") ?? null;
-  const nextJob = useMemo(() => [...jobs].sort((a, b) => a.nextRunAt - b.nextRunAt)[0] ?? null, [jobs]);
+  const nextJob = useMemo(() => [...jobs].filter((job) => job.key !== "deepDive" || Boolean(scanId)).sort((a, b) => a.nextRunAt - b.nextRunAt)[0] ?? null, [jobs, scanId]);
 
   if (!normalisedUsername) return null;
 
@@ -342,7 +442,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         <div>
           <span className="ui-eyebrow">Local extension queue</span>
           <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Scheduled browser jobs</h2>
-          <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session. Cadence and scheduled batch size come from Product Ops settings.</p>
+          <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session. Idle crawling keeps collecting data when priority work is empty.</p>
         </div>
         <span className={isReady ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{isReady ? "Extension ready" : "Extension needed"}</span>
       </div>
@@ -351,13 +451,17 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         {activeJob ? <p className="m-0 font-extrabold text-[var(--text)]">Currently running: {activeJob.title}</p> : nextJob ? <p className="m-0 font-extrabold text-[var(--text)]">Next job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p> : <p className="m-0 font-extrabold text-[var(--text)]">No local jobs scheduled.</p>}
       </div>
 
-      <div className="grid gap-3 lg:grid-cols-2">
+      <div className="grid gap-3 lg:grid-cols-3">
         {jobs.map((job) => (
           <article className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4" key={job.key}>
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <strong className="block text-[var(--text)]">{job.title}</strong>
-                <small className="text-[var(--text-muted)]">Every {duration(job.cadenceMs)}{job.key === "deepDive" ? ` · scheduled batch ${settings.deepDiveBatchSize}` : ""}</small>
+                <small className="text-[var(--text-muted)]">
+                  Every {duration(job.cadenceMs)}
+                  {job.key === "deepDive" ? ` · scheduled batch ${settings.deepDiveBatchSize}` : ""}
+                  {job.key === "idleCrawl" ? ` · batch ${settings.idleCrawlBatchSize}` : ""}
+                </small>
               </div>
               <span className={statusClass(job.status)}>{job.status}</span>
             </div>
@@ -374,6 +478,11 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
                 {job.key === "deepDive" ? (
                   <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || !scanId} onClick={runAllDueDeepDives}>
                     Run all due
+                  </button>
+                ) : null}
+                {job.key === "idleCrawl" ? (
+                  <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current)} onClick={runIdleSweep}>
+                    Run sweep
                   </button>
                 ) : null}
               </div>
