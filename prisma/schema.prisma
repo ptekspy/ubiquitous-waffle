@@ -41,6 +41,7 @@ model User {
   trackedPeerAccounts TrackedPeerAccount[]
   weeklyReports       WeeklyReport[]
   historicalSnapshots HistoricalSnapshot[]
+  eventLogs           EventLog[]
 
   @@map("user")
 }
@@ -358,7 +359,7 @@ model WorkspaceSetting {
   weeklyReportEnabled  Boolean  @default(true)
   trackedSubredditText String   @default("daresgonewild")
   createdAt            DateTime @default(now())
-  updatedAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
 
@@ -382,7 +383,7 @@ model PlannedPost {
   rationale            String?
   notes                String?
   createdAt            DateTime @default(now())
-  updatedAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
 
   owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
 
@@ -399,7 +400,7 @@ model TrackedSubreddit {
   enabled     Boolean  @default(true)
   notes       String?
   createdAt   DateTime @default(now())
-  updatedAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
 
@@ -418,7 +419,7 @@ model TrackedPeerAccount {
   latestFollowers Int?
   notes           String?
   createdAt       DateTime @default(now())
-  updatedAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
 
@@ -441,6 +442,27 @@ model WeeklyReport {
 
   @@index([ownerUserId, weekStart])
   @@index([accountId, weekStart])
+}
+
+model EventLog {
+  id          String   @id
+  ownerUserId String?
+  accountId   String?
+  scanId      String?
+  jobId       String?
+  type        String
+  severity    String   @default("info")
+  message     String
+  metadata    Json?
+  createdAt   DateTime @default(now())
+
+  owner User? @relation(fields: [ownerUserId], references: [id], onDelete: SetNull)
+
+  @@index([ownerUserId, createdAt])
+  @@index([accountId, createdAt])
+  @@index([scanId])
+  @@index([jobId])
+  @@index([type, createdAt])
 }
 
 model HistoricalSnapshot {
@@ -573,6 +595,7 @@ model PostDeepDiveJob {
 
   @@index([status, createdAt])
   @@index([ownerUserId, createdAt])
+  @@index([ownerUserId, status, createdAt])
   @@index([postSnapshotId])
 }
 
@@ -596,6 +619,7 @@ model PlannerJob {
   scan    AccountScan   @relation(fields: [scanId], references: [id], onDelete: Cascade)
 
   @@index([status, createdAt])
+  @@index([status, lockedAt])
   @@index([accountId, createdAt])
   @@index([scanId])
 }
