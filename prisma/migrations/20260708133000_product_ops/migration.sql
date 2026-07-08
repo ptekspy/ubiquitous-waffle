@@ -5,7 +5,7 @@ CREATE TABLE IF NOT EXISTS "WorkspaceSetting" (
   "timezone" TEXT NOT NULL DEFAULT 'Europe/London',
   "profileScanInterval" INTEGER NOT NULL DEFAULT 900000,
   "deepDiveInterval" INTEGER NOT NULL DEFAULT 7200000,
-  "deepDiveBatchSize" INTEGER NOT NULL DEFAULT 50,
+  "deepDiveBatchSize" INTEGER NOT NULL DEFAULT 8,
   "plannerEnabled" BOOLEAN NOT NULL DEFAULT true,
   "plannerModel" TEXT,
   "weeklyReportEnabled" BOOLEAN NOT NULL DEFAULT true,
