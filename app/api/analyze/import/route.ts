@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { validateImportRequest } from "@/lib/api/validation";
 import { buildAccountAnalytics } from "@/lib/analytics";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { BrowserImportError, parseBrowserImport } from "@/lib/browser-import";
@@ -12,35 +13,30 @@ type ErrorResponse = {
   error: string;
 };
 
-type ImportRequestBody = {
-  raw?: unknown;
-  enqueueDeepDiveJobs?: unknown;
-  enqueuePlannerJob?: unknown;
-};
-
 export async function POST(request: NextRequest): Promise<NextResponse> {
   const user = await requireCurrentUser().catch(() => null);
   if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
 
-  let body: ImportRequestBody;
+  let body: unknown;
 
   try {
-    body = (await request.json()) as ImportRequestBody;
+    body = await request.json();
   } catch {
     return NextResponse.json<ErrorResponse>({ error: "Request body must be JSON." }, { status: 400 });
   }
 
-  if (typeof body.raw !== "string" || body.raw.trim().length === 0) {
-    return NextResponse.json<ErrorResponse>({ error: "Paste JSON first." }, { status: 400 });
+  const validated = validateImportRequest(body);
+  if (!validated.ok) {
+    return NextResponse.json<ErrorResponse>({ error: validated.error }, { status: validated.status });
   }
 
   try {
-    const accountData = parseBrowserImport(body.raw);
+    const accountData = parseBrowserImport(validated.value.raw);
     const analytics = buildAccountAnalytics(accountData);
     const savedScan = await saveAccountScan(accountData, analytics, user.id, {
-      enqueueDeepDiveJobs: body.enqueueDeepDiveJobs !== false,
+      enqueueDeepDiveJobs: validated.value.enqueueDeepDiveJobs,
     });
-    const plannerJob = body.enqueuePlannerJob === false ? null : await enqueuePlannerJobForScan(savedScan.scanId, user.id);
+    const plannerJob = validated.value.enqueuePlannerJob ? await enqueuePlannerJobForScan(savedScan.scanId, user.id) : null;
 
     return NextResponse.json({
       profile: accountData.profile,
