@@ -1,13 +1,14 @@
 import { randomUUID } from "node:crypto";
 
 import { prisma } from "@/lib/db/prisma";
-import { parseHistoricalSnapshotContent, type ParsedHistoricalComment, type ParsedHistoricalPost } from "./snapshot-parser";
+import { parseHistoricalSnapshotContent, type ParsedHistoricalComment, type ParsedHistoricalPost, type ParsedProfileMetrics } from "./snapshot-parser";
 
 type SnapshotImportInput = {
   ownerUserId: string;
   capturedAt: Date;
   content: string;
   sourceFileName?: string | null;
+  username?: string | null;
 };
 
 export type SnapshotImportResult = {
@@ -18,6 +19,8 @@ export type SnapshotImportResult = {
   postCount: number;
   commentCount: number;
   username: string | null;
+  accountMetricImported: boolean;
+  profileMetrics: ParsedProfileMetrics;
 };
 
 export type HistoricalSnapshotSummary = {
@@ -41,26 +44,110 @@ type SnapshotRow = {
 };
 
 type ExistingSnapshotRow = { id: string };
+type AccountRow = {
+  id: string;
+  username: string;
+  totalKarma: number;
+  linkKarma: number;
+  commentKarma: number;
+  awardeeKarma: number;
+  awarderKarma: number;
+  followerCount: number | null;
+};
 
-async function findAccountId(ownerUserId: string, username: string | null): Promise<string | null> {
-  const account = await prisma.redditAccount.findFirst({
+function metricPatch(metrics: ParsedProfileMetrics): Partial<AccountRow> {
+  return {
+    ...(metrics.totalKarma !== null ? { totalKarma: metrics.totalKarma } : {}),
+    ...(metrics.linkKarma !== null ? { linkKarma: metrics.linkKarma } : {}),
+    ...(metrics.commentKarma !== null ? { commentKarma: metrics.commentKarma } : {}),
+    ...(metrics.awardeeKarma !== null ? { awardeeKarma: metrics.awardeeKarma } : {}),
+    ...(metrics.awarderKarma !== null ? { awarderKarma: metrics.awarderKarma } : {}),
+    ...(metrics.followerCount !== null ? { followerCount: metrics.followerCount } : {}),
+  };
+}
+
+function hasAnyProfileMetric(metrics: ParsedProfileMetrics): boolean {
+  return metrics.totalKarma !== null || metrics.linkKarma !== null || metrics.commentKarma !== null || metrics.awardeeKarma !== null || metrics.awarderKarma !== null || metrics.followerCount !== null;
+}
+
+async function findOrCreateAccount(ownerUserId: string, username: string | null, metrics: ParsedProfileMetrics): Promise<AccountRow | null> {
+  const cleanUsername = username?.trim();
+  const existing = await prisma.redditAccount.findFirst({
     where: {
       ownerUserId,
-      ...(username ? { username } : {}),
+      ...(cleanUsername ? { username: cleanUsername } : {}),
     },
     orderBy: { updatedAt: "desc" },
-    select: { id: true },
+    select: {
+      id: true,
+      username: true,
+      totalKarma: true,
+      linkKarma: true,
+      commentKarma: true,
+      awardeeKarma: true,
+      awarderKarma: true,
+      followerCount: true,
+    },
   });
 
-  if (account) return account.id;
+  if (existing) {
+    const update: Record<string, number | null> = {};
+    if (existing.totalKarma === 0 && metrics.totalKarma !== null) update.totalKarma = metrics.totalKarma;
+    if (existing.linkKarma === 0 && metrics.linkKarma !== null) update.linkKarma = metrics.linkKarma;
+    if (existing.commentKarma === 0 && metrics.commentKarma !== null) update.commentKarma = metrics.commentKarma;
+    if (existing.awardeeKarma === 0 && metrics.awardeeKarma !== null) update.awardeeKarma = metrics.awardeeKarma;
+    if (existing.awarderKarma === 0 && metrics.awarderKarma !== null) update.awarderKarma = metrics.awarderKarma;
+    if (existing.followerCount === null && metrics.followerCount !== null) update.followerCount = metrics.followerCount;
 
-  const latest = await prisma.redditAccount.findFirst({
-    where: { ownerUserId },
-    orderBy: { updatedAt: "desc" },
-    select: { id: true },
+    if (Object.keys(update).length > 0) {
+      await prisma.redditAccount.update({ where: { id: existing.id }, data: update });
+      return { ...existing, ...update } as AccountRow;
+    }
+
+    return existing;
+  }
+
+  if (!cleanUsername) {
+    const latest = await prisma.redditAccount.findFirst({
+      where: { ownerUserId },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        username: true,
+        totalKarma: true,
+        linkKarma: true,
+        commentKarma: true,
+        awardeeKarma: true,
+        awarderKarma: true,
+        followerCount: true,
+      },
+    });
+    return latest ?? null;
+  }
+
+  return prisma.redditAccount.create({
+    data: {
+      ownerUserId,
+      username: cleanUsername,
+      totalKarma: metrics.totalKarma ?? 0,
+      linkKarma: metrics.linkKarma ?? 0,
+      commentKarma: metrics.commentKarma ?? 0,
+      awardeeKarma: metrics.awardeeKarma ?? 0,
+      awarderKarma: metrics.awarderKarma ?? 0,
+      followerCount: metrics.followerCount,
+      over18: true,
+    },
+    select: {
+      id: true,
+      username: true,
+      totalKarma: true,
+      linkKarma: true,
+      commentKarma: true,
+      awardeeKarma: true,
+      awarderKarma: true,
+      followerCount: true,
+    },
   });
-
-  return latest?.id ?? null;
 }
 
 function safeName(value: string | null | undefined): string | null {
@@ -81,6 +168,54 @@ async function existingSnapshotId(ownerUserId: string, capturedAt: Date, sourceF
   `;
 
   return rows[0]?.id ?? null;
+}
+
+async function upsertImportedAccountMetric(account: AccountRow | null, capturedAt: Date, sourceFileName: string | null, metrics: ParsedProfileMetrics): Promise<boolean> {
+  if (!account || !hasAnyProfileMetric(metrics)) return false;
+
+  const source = "historical-profile-html";
+  const totalKarma = metrics.totalKarma ?? account.totalKarma ?? 0;
+  const linkKarma = metrics.linkKarma ?? account.linkKarma ?? 0;
+  const commentKarma = metrics.commentKarma ?? account.commentKarma ?? 0;
+  const awardeeKarma = metrics.awardeeKarma ?? account.awardeeKarma ?? 0;
+  const awarderKarma = metrics.awarderKarma ?? account.awarderKarma ?? 0;
+  const followerCount = metrics.followerCount ?? account.followerCount ?? null;
+
+  await prisma.accountMetricSnapshot.deleteMany({
+    where: {
+      accountId: account.id,
+      source,
+      capturedAt,
+    },
+  });
+
+  await prisma.accountMetricSnapshot.create({
+    data: {
+      accountId: account.id,
+      source,
+      totalKarma,
+      linkKarma,
+      commentKarma,
+      awardeeKarma,
+      awarderKarma,
+      followerCount,
+      capturedAt,
+    },
+  });
+
+  await prisma.redditAccount.update({
+    where: { id: account.id },
+    data: {
+      ...(account.totalKarma === 0 && metrics.totalKarma !== null ? { totalKarma } : {}),
+      ...(account.linkKarma === 0 && metrics.linkKarma !== null ? { linkKarma } : {}),
+      ...(account.commentKarma === 0 && metrics.commentKarma !== null ? { commentKarma } : {}),
+      ...(account.awardeeKarma === 0 && metrics.awardeeKarma !== null ? { awardeeKarma } : {}),
+      ...(account.awarderKarma === 0 && metrics.awarderKarma !== null ? { awarderKarma } : {}),
+      ...(account.followerCount === null && metrics.followerCount !== null ? { followerCount } : {}),
+    },
+  });
+
+  return true;
 }
 
 async function insertPost(snapshotId: string, ownerUserId: string, accountId: string | null, observedAt: Date, post: ParsedHistoricalPost): Promise<void> {
@@ -127,14 +262,18 @@ async function insertComment(snapshotId: string, ownerUserId: string, accountId:
 
 export async function importHistoricalSnapshot(input: SnapshotImportInput): Promise<SnapshotImportResult> {
   const parsed = parseHistoricalSnapshotContent(input.content);
+  const username = parsed.username ?? input.username?.trim() ?? null;
+  const profileMetrics: ParsedProfileMetrics = { ...parsed.profileMetrics, username };
 
-  if (parsed.posts.length === 0 && parsed.comments.length === 0) {
-    throw new Error("No Reddit posts or comments were found in that snapshot.");
+  if (parsed.posts.length === 0 && parsed.comments.length === 0 && !hasAnyProfileMetric(profileMetrics)) {
+    throw new Error("No Reddit posts, comments, karma, or followers were found in that snapshot.");
   }
 
-  const accountId = await findAccountId(input.ownerUserId, parsed.username);
+  const account = await findOrCreateAccount(input.ownerUserId, username, profileMetrics);
+  const accountId = account?.id ?? null;
   const sourceFileName = safeName(input.sourceFileName);
   const snapshotId = (await existingSnapshotId(input.ownerUserId, input.capturedAt, sourceFileName)) ?? randomUUID();
+  const accountMetricImported = await upsertImportedAccountMetric(account, input.capturedAt, sourceFileName, profileMetrics);
 
   await prisma.$executeRaw`
     INSERT INTO "HistoricalSnapshot" (
@@ -170,7 +309,9 @@ export async function importHistoricalSnapshot(input: SnapshotImportInput): Prom
     sourceFileName,
     postCount: parsed.posts.length,
     commentCount: parsed.comments.length,
-    username: parsed.username,
+    username,
+    accountMetricImported,
+    profileMetrics,
   };
 }
 
