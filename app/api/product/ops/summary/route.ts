@@ -2,6 +2,7 @@ import { randomUUID } from "crypto";
 
 import { NextResponse } from "next/server";
 
+import { buildScanQuality } from "@/lib/analytics/scan-quality";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import type { ProductOpsSettings } from "@/lib/product/ops";
@@ -44,16 +45,24 @@ async function activeAccount(ownerUserId: string, settings: ProductOpsSettings):
 }
 
 async function health(ownerUserId: string, accountId: string | null): Promise<HealthItem[]> {
-  const latestScan = accountId ? await prisma.accountScan.findFirst({ where: { accountId }, orderBy: { fetchedAt: "desc" }, select: { fetchedAt: true } }) : null;
+  const latestScan = accountId
+    ? await prisma.accountScan.findFirst({
+        where: { accountId },
+        orderBy: { fetchedAt: "desc" },
+        select: { fetchedAt: true, rawPostCount: true, rawCommentCount: true, cleanedPostCount: true, cleanedCommentCount: true, warnings: true, metadata: true },
+      })
+    : null;
   const latestMetric = accountId ? await prisma.accountMetricSnapshot.findFirst({ where: { accountId }, orderBy: { capturedAt: "desc" }, select: { followerCount: true } }) : null;
   const deepDive = await prisma.postDeepDiveJob.groupBy({ by: ["status"], where: { ownerUserId }, _count: { _all: true } }).catch(() => []);
   const planner = accountId ? await prisma.plannerJob.groupBy({ by: ["status"], where: { accountId }, _count: { _all: true } }).catch(() => []) : [];
   const queuedDeepDives = deepDive.find((row) => row.status === "QUEUED")?._count._all ?? 0;
   const failedPlanner = planner.find((row) => row.status === "FAILED")?._count._all ?? 0;
+  const scanQuality = buildScanQuality(latestScan);
 
   return [
     { key: "database", label: "Database", status: "ok", detail: "Connected and responding." },
     { key: "scan", label: "Profile scan", status: latestScan ? "ok" : "warn", detail: latestScan ? `Last scan ${latestScan.fetchedAt.toLocaleString("en-GB")}` : "No profile scan saved yet." },
+    { key: "scanQuality", label: scanQuality.label, status: scanQuality.status, detail: scanQuality.detail },
     { key: "followers", label: "Follower scrape", status: latestMetric?.followerCount !== null && latestMetric?.followerCount !== undefined ? "ok" : "warn", detail: latestMetric?.followerCount !== null && latestMetric?.followerCount !== undefined ? `Latest followers: ${latestMetric.followerCount}` : "Waiting for a scan with follower count." },
     { key: "deepDive", label: "Deep dives", status: queuedDeepDives > 0 ? "warn" : "ok", detail: queuedDeepDives > 0 ? `${queuedDeepDives} jobs queued.` : "No backlog detected." },
     { key: "planner", label: "Planner", status: failedPlanner > 0 ? "warn" : "ok", detail: failedPlanner > 0 ? `${failedPlanner} planner jobs failed.` : "No failed planner jobs detected." },
