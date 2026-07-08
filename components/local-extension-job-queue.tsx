@@ -45,7 +45,8 @@ type JobView = {
 
 const DEFAULT_PROFILE_INTERVAL_MS = 15 * 60 * 1000;
 const DEFAULT_DEEP_DIVE_INTERVAL_MS = 2 * 60 * 60 * 1000;
-const DEFAULT_DEEP_DIVE_BATCH_SIZE = 8;
+const DEFAULT_DEEP_DIVE_BATCH_SIZE = 50;
+const MAX_DEEP_DIVE_RUN_ALL = 500;
 const TICK_MS = 1000;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
 
@@ -241,21 +242,23 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     }
   }
 
-  async function runDeepDiveJob() {
+  async function runDeepDiveJob(runAllDue = false) {
     if (!scanId) {
       updateJob("deepDive", { status: "waiting", detail: "Waiting for a saved scan before deep dives can run." });
       return;
     }
 
     const startedAt = Date.now();
+    const limit = runAllDue ? MAX_DEEP_DIVE_RUN_ALL : Math.max(1, settingsRef.current.deepDiveBatchSize);
     runningRef.current = "deepDive";
-    updateJob("deepDive", { status: "running", detail: "Claiming due post deep-dive jobs." });
-    statusRef.current("Running extension-backed post deep-dive batch.");
+    updateJob("deepDive", { status: "running", detail: runAllDue ? "Claiming every due post deep-dive job." : `Claiming up to ${limit} due post deep-dive jobs.` });
+    statusRef.current(runAllDue ? "Running all due extension-backed post deep dives." : `Running extension-backed post deep-dive batch of up to ${limit}.`);
 
     let completed = 0;
+    let exhausted = false;
 
     try {
-      for (let index = 0; index < settingsRef.current.deepDiveBatchSize; index += 1) {
+      for (let index = 0; index < limit; index += 1) {
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok) {
           updateJob("deepDive", { status: "error", detail: claim.error, lastDurationMs: Date.now() - startedAt });
@@ -263,10 +266,13 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
           return;
         }
 
-        if (!claim.job) break;
+        if (!claim.job) {
+          exhausted = true;
+          break;
+        }
 
-        updateJob("deepDive", { status: "running", detail: `Deep crawling r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}` });
-        statusRef.current(`Deep crawling r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}`);
+        updateJob("deepDive", { status: "running", detail: `Deep crawling ${completed + 1}${runAllDue ? "" : `/${limit}`} · r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}` });
+        statusRef.current(`Deep crawling ${completed + 1}${runAllDue ? "" : `/${limit}`} · r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}`);
 
         const response = await sendExtensionMessage<ExtensionCrawlerResponse>({
           type: "PAIDPOLITELY_DEEP_DIVE_REDDIT_POST",
@@ -290,8 +296,10 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       }
 
       if (completed > 0) await refreshRef.current();
-      markDone("deepDive", completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.` : "No post deep dives were due.", startedAt);
-      statusRef.current(completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.` : "No post deep dives were due.");
+      const suffix = runAllDue && !exhausted && completed >= MAX_DEEP_DIVE_RUN_ALL ? ` Hit the safety cap of ${MAX_DEEP_DIVE_RUN_ALL}; run again to continue.` : "";
+      const detail = completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.${suffix}` : "No post deep dives were due.";
+      markDone("deepDive", detail, startedAt);
+      statusRef.current(detail);
     } finally {
       runningRef.current = null;
     }
@@ -301,6 +309,11 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     if (!isReady || runningRef.current) return;
     updateJob(key, { nextRunAt: Date.now(), status: "waiting", detail: key === "profile" ? "Manual profile scan requested." : "Manual deep-dive batch requested." });
     setNow(Date.now());
+  }
+
+  function runAllDueDeepDives() {
+    if (!isReady || runningRef.current || !scanId) return;
+    void runDeepDiveJob(true);
   }
 
   useEffect(() => {
@@ -314,7 +327,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     if (!due) return;
 
     if (due.key === "profile") void runProfileJob();
-    if (due.key === "deepDive") void runDeepDiveJob();
+    if (due.key === "deepDive") void runDeepDiveJob(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady, jobs, now, scanId]);
 
@@ -329,7 +342,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         <div>
           <span className="ui-eyebrow">Local extension queue</span>
           <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Scheduled browser jobs</h2>
-          <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session. Cadence comes from Product Ops settings.</p>
+          <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session. Cadence and scheduled batch size come from Product Ops settings.</p>
         </div>
         <span className={isReady ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{isReady ? "Extension ready" : "Extension needed"}</span>
       </div>
@@ -344,7 +357,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
             <div className="mb-3 flex items-start justify-between gap-3">
               <div>
                 <strong className="block text-[var(--text)]">{job.title}</strong>
-                <small className="text-[var(--text-muted)]">Every {duration(job.cadenceMs)}</small>
+                <small className="text-[var(--text-muted)]">Every {duration(job.cadenceMs)}{job.key === "deepDive" ? ` · scheduled batch ${settings.deepDiveBatchSize}` : ""}</small>
               </div>
               <span className={statusClass(job.status)}>{job.status}</span>
             </div>
@@ -354,7 +367,16 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
                 <span>Next: {job.status === "running" ? "running now" : duration(job.nextRunAt - now)}</span>
                 <span className="ml-3 text-[var(--text-muted)]">Last duration: {duration(job.lastDurationMs)}</span>
               </div>
-              <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)} onClick={() => runNow(job.key)}>Run now</button>
+              <div className="flex flex-wrap gap-2">
+                <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)} onClick={() => runNow(job.key)}>
+                  Run now
+                </button>
+                {job.key === "deepDive" ? (
+                  <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || !scanId} onClick={runAllDueDeepDives}>
+                    Run all due
+                  </button>
+                ) : null}
+              </div>
             </div>
           </article>
         ))}
