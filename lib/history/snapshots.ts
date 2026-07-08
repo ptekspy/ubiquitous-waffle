@@ -55,17 +55,6 @@ type AccountRow = {
   followerCount: number | null;
 };
 
-function metricPatch(metrics: ParsedProfileMetrics): Partial<AccountRow> {
-  return {
-    ...(metrics.totalKarma !== null ? { totalKarma: metrics.totalKarma } : {}),
-    ...(metrics.linkKarma !== null ? { linkKarma: metrics.linkKarma } : {}),
-    ...(metrics.commentKarma !== null ? { commentKarma: metrics.commentKarma } : {}),
-    ...(metrics.awardeeKarma !== null ? { awardeeKarma: metrics.awardeeKarma } : {}),
-    ...(metrics.awarderKarma !== null ? { awarderKarma: metrics.awarderKarma } : {}),
-    ...(metrics.followerCount !== null ? { followerCount: metrics.followerCount } : {}),
-  };
-}
-
 function hasAnyProfileMetric(metrics: ParsedProfileMetrics): boolean {
   return metrics.totalKarma !== null || metrics.linkKarma !== null || metrics.commentKarma !== null || metrics.awardeeKarma !== null || metrics.awarderKarma !== null || metrics.followerCount !== null;
 }
@@ -170,7 +159,7 @@ async function existingSnapshotId(ownerUserId: string, capturedAt: Date, sourceF
   return rows[0]?.id ?? null;
 }
 
-async function upsertImportedAccountMetric(account: AccountRow | null, capturedAt: Date, sourceFileName: string | null, metrics: ParsedProfileMetrics): Promise<boolean> {
+async function upsertImportedAccountMetric(account: AccountRow | null, capturedAt: Date, metrics: ParsedProfileMetrics): Promise<boolean> {
   if (!account || !hasAnyProfileMetric(metrics)) return false;
 
   const source = "historical-profile-html";
@@ -273,7 +262,7 @@ export async function importHistoricalSnapshot(input: SnapshotImportInput): Prom
   const accountId = account?.id ?? null;
   const sourceFileName = safeName(input.sourceFileName);
   const snapshotId = (await existingSnapshotId(input.ownerUserId, input.capturedAt, sourceFileName)) ?? randomUUID();
-  const accountMetricImported = await upsertImportedAccountMetric(account, input.capturedAt, sourceFileName, profileMetrics);
+  const accountMetricImported = await upsertImportedAccountMetric(account, input.capturedAt, profileMetrics);
 
   await prisma.$executeRaw`
     INSERT INTO "HistoricalSnapshot" (
