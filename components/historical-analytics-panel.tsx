@@ -42,6 +42,16 @@ type ImportResult = {
   };
 };
 
+type ReparseResult = {
+  snapshotsChecked: number;
+  snapshotsReparsed: number;
+  followerSnapshotsImported: number;
+  skippedWithoutStoredContent: number;
+  skippedWithoutFollowers: number;
+  zeroMetricSnapshotsDeleted: number;
+  zeroAccountFollowersCleared: number;
+};
+
 const presets: Array<{ key: HistoricalRangePreset; label: string }> = [
   { key: "30d", label: "30d" },
   { key: "90d", label: "90d" },
@@ -168,6 +178,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
   const [sourceFileName, setSourceFileName] = useState("");
   const [state, setState] = useState<LoadState>("idle");
   const [importState, setImportState] = useState<LoadState>("idle");
+  const [reparseState, setReparseState] = useState<LoadState>("idle");
   const [error, setError] = useState<string | null>(null);
   const [importMessage, setImportMessage] = useState<string | null>(null);
   const [history, setHistory] = useState<HistoricalPerformanceResponse | null>(null);
@@ -220,6 +231,32 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
     } catch (importError) {
       setImportState("error");
       setError(importError instanceof Error ? importError.message : "Unable to import snapshot.");
+    }
+  }
+
+  async function submitFollowerReparse() {
+    setReparseState("loading");
+    setImportMessage(null);
+    setError(null);
+
+    try {
+      const response = await fetch("/api/history/snapshots/import", { method: "PATCH" });
+      const payload = await response.json();
+      if (!response.ok) throw new Error(payload.error ?? "Unable to reparse followers.");
+      const result = payload as ReparseResult;
+      const cleanupBits = [
+        result.zeroMetricSnapshotsDeleted > 0 ? `${result.zeroMetricSnapshotsDeleted} zero follower metric rows deleted` : null,
+        result.zeroAccountFollowersCleared > 0 ? `${result.zeroAccountFollowersCleared} account zero values cleared` : null,
+      ].filter(Boolean).join(" · ");
+      const skipped = result.skippedWithoutStoredContent > 0 ? ` ${result.skippedWithoutStoredContent} older imports did not have stored raw HTML to reparse.` : "";
+      setImportMessage(`Reparsed ${result.snapshotsReparsed}/${result.snapshotsChecked} stored snapshots and restored ${result.followerSnapshotsImported} follower points.${cleanupBits ? ` ${cleanupBits}.` : ""}${skipped}`);
+      setReparseState("loaded");
+      window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
+      window.dispatchEvent(new Event("paidpolitely-workspace-refresh"));
+      await load();
+    } catch (reparseError) {
+      setReparseState("error");
+      setError(reparseError instanceof Error ? reparseError.message : "Unable to reparse followers.");
     }
   }
 
@@ -276,9 +313,10 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
           <label className="mt-3 grid gap-1 text-sm font-bold text-[var(--text-muted)]">Or paste HTML / JSON<textarea className="input-field min-h-[150px]" placeholder="Paste the Reddit profile HTML, .txt contents, or old PaidPolitely JSON capture here" value={content} onChange={(event) => setContent(event.target.value)} /></label>
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="button-primary" type="button" disabled={importState === "loading" || (!file && !content.trim())} onClick={() => void submitImport()}>{importState === "loading" ? "Importing…" : "Import historical snapshot"}</button>
+            <button className="button-secondary" type="button" disabled={reparseState === "loading" || snapshots.length === 0} onClick={() => void submitFollowerReparse()}>{reparseState === "loading" ? "Reparsing…" : "Reparse followers"}</button>
             <button className="button-secondary" type="button" disabled={!username.trim()} onClick={() => void onRunFirstScan()}>{hasLiveScan ? "Run scan again" : "Run first scan"}</button>
           </div>
-          <p className="mt-3 text-xs text-[var(--text-muted)]">After the first scan, keep this dashboard open: the local queue handles profile scans and post deep dives.</p>
+          <p className="mt-3 text-xs text-[var(--text-muted)]">Follower reparsing uses stored raw HTML where available and also clears any old zero-count follower records.</p>
         </article>
 
         <article className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
