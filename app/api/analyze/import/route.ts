@@ -14,6 +14,8 @@ type ErrorResponse = {
 
 type ImportRequestBody = {
   raw?: unknown;
+  enqueueDeepDiveJobs?: unknown;
+  enqueuePlannerJob?: unknown;
 };
 
 export async function POST(request: NextRequest): Promise<NextResponse> {
@@ -35,8 +37,10 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   try {
     const accountData = parseBrowserImport(body.raw);
     const analytics = buildAccountAnalytics(accountData);
-    const savedScan = await saveAccountScan(accountData, analytics, user.id);
-    const plannerJob = await enqueuePlannerJobForScan(savedScan.scanId, user.id);
+    const savedScan = await saveAccountScan(accountData, analytics, user.id, {
+      enqueueDeepDiveJobs: body.enqueueDeepDiveJobs !== false,
+    });
+    const plannerJob = body.enqueuePlannerJob === false ? null : await enqueuePlannerJobForScan(savedScan.scanId, user.id);
 
     return NextResponse.json({
       profile: accountData.profile,
