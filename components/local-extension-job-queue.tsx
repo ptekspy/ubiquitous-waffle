@@ -203,7 +203,10 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   }
 
   async function runDeepDiveJob() {
-    if (!scanId) return;
+    if (!scanId) {
+      updateJob("deepDive", { status: "waiting", detail: "Waiting for a saved scan before deep dives can run." });
+      return;
+    }
 
     runningRef.current = "deepDive";
     updateJob("deepDive", { status: "running", detail: "Claiming due post deep-dive jobs." });
@@ -261,7 +264,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
   useEffect(() => {
     if (!isReady || runningRef.current) return;
-    const due = jobs.find((job) => job.nextRunAt <= now);
+    const due = jobs.find((job) => job.nextRunAt <= now && (job.key !== "deepDive" || Boolean(scanId)));
     if (!due) return;
 
     if (due.key === "profile") void runProfileJob();
