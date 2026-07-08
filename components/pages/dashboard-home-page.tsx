@@ -2,7 +2,7 @@
 
 import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 
 import { ErrorCard } from "@/components/error-card";
 import { currentUserQueryOptions } from "@/lib/api/queries";
@@ -42,7 +42,7 @@ function dateTime(value: string | null | undefined): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
-function DashboardCard({ eyebrow, title, description, status, children, actions }: { eyebrow: string; title: string; description?: string; status?: { label: string; tone: "ok" | "warn" | "off" | string }; children?: React.ReactNode; actions?: CardAction[] }) {
+function DashboardCard({ eyebrow, title, description, status, children, actions }: { eyebrow: string; title: string; description?: string; status?: { label: string; tone: "ok" | "warn" | "off" | string }; children?: ReactNode; actions?: CardAction[] }) {
   return (
     <section className={`${cardClass} p-5`}>
       <div className="mb-4 flex items-start justify-between gap-3">
