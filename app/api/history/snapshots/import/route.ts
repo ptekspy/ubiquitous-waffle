@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireCurrentUser } from "@/lib/auth/session";
-import { importHistoricalSnapshot, listHistoricalSnapshots, type SnapshotImportResult } from "@/lib/history/snapshots";
+import { importHistoricalSnapshot, listHistoricalSnapshots, reparseHistoricalSnapshotFollowers, type ReparseFollowerResult, type SnapshotImportResult } from "@/lib/history/snapshots";
 
 export const dynamic = "force-dynamic";
 
@@ -90,5 +90,17 @@ export async function POST(request: NextRequest): Promise<NextResponse<SnapshotI
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json<ErrorResponse>({ error: error instanceof Error ? error.message : "Unable to import historical snapshot." }, { status: 400 });
+  }
+}
+
+export async function PATCH(): Promise<NextResponse<ReparseFollowerResult | ErrorResponse>> {
+  const user = await requireCurrentUser().catch(() => null);
+  if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
+
+  try {
+    const result = await reparseHistoricalSnapshotFollowers(user.id);
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json<ErrorResponse>({ error: error instanceof Error ? error.message : "Unable to reparse historical followers." }, { status: 500 });
   }
 }
