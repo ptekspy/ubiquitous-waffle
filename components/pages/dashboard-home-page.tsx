@@ -4,11 +4,11 @@ import { useQuery } from "@tanstack/react-query";
 import Link from "next/link";
 import { useEffect, useState, type ReactNode } from "react";
 
+import { useDashboardRuntime } from "@/components/dashboard-runtime-provider";
 import { ErrorCard } from "@/components/error-card";
 import { currentUserQueryOptions } from "@/lib/api/queries";
-import { useDashboardRuntime } from "@/components/dashboard-runtime-provider";
 import type { ExtensionState } from "@/lib/extension/types";
-import type { ProductOpsResponse } from "@/lib/product/ops";
+import type { ProductOpsSettings } from "@/lib/product/ops";
 import { cardClass, inputClass, mutedClass, primaryButtonClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
 import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
@@ -17,6 +17,15 @@ import { normaliseRedditUsername } from "@/utils/normalise-reddit-username";
 const buttonClass = "rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] no-underline disabled:cursor-not-allowed disabled:opacity-50";
 
 type OpsState = "idle" | "loading" | "loaded" | "error";
+type HealthStatus = "ok" | "warn" | "off";
+
+type ProductOpsSummaryResponse = {
+  generatedAt: string;
+  settings: ProductOpsSettings;
+  activeAccount: { id: string; username: string; totalKarma: number; followerCount: number | null } | null;
+  onboarding: Array<{ key: string; label: string; complete: boolean; detail: string }>;
+  health: Array<{ key: string; label: string; status: HealthStatus; detail: string }>;
+};
 
 type CardAction =
   | { label: string; href: string; kind?: "primary" | "secondary" }
@@ -29,7 +38,7 @@ function statusClass(status: "ok" | "warn" | "off" | string): string {
   return "status-pill";
 }
 
-function extensionHealth(extensionState: ExtensionState): "ok" | "warn" | "off" {
+function extensionHealth(extensionState: ExtensionState): HealthStatus {
   if (extensionState === "installed") return "ok";
   if (extensionState === "checking" || extensionState === "scanning") return "warn";
   return "off";
@@ -69,15 +78,15 @@ function DashboardCard({ eyebrow, title, description, status, children, actions 
   );
 }
 
-async function fetchOps(): Promise<ProductOpsResponse> {
-  const response = await fetch(`/api/product/ops?ts=${Date.now()}`, { cache: "no-store" });
-  if (!response.ok) throw new Error("Unable to load product operations.");
-  return (await response.json()) as ProductOpsResponse;
+async function fetchOps(): Promise<ProductOpsSummaryResponse> {
+  const response = await fetch(`/api/product/ops/summary?ts=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Unable to load product operations summary.");
+  return (await response.json()) as ProductOpsSummaryResponse;
 }
 
 function useProductOpsSummary() {
   const [state, setState] = useState<OpsState>("idle");
-  const [ops, setOps] = useState<ProductOpsResponse | null>(null);
+  const [ops, setOps] = useState<ProductOpsSummaryResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   async function load() {
@@ -89,7 +98,7 @@ function useProductOpsSummary() {
       setState("loaded");
     } catch (loadError) {
       setState("error");
-      setError(loadError instanceof Error ? loadError.message : "Unable to load product operations.");
+      setError(loadError instanceof Error ? loadError.message : "Unable to load product operations summary.");
     }
   }
 
