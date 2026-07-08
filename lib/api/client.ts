@@ -7,6 +7,26 @@ const JSON_FALLBACK_ERROR: ApiError = {
   error: "The server returned a non-JSON response.",
 };
 
+export type CurrentUser = {
+  id: string;
+  email: string;
+  name: string;
+};
+
+export type CurrentUserResponse = {
+  user: CurrentUser | null;
+};
+
+export type CurrentUserApiResult =
+  | {
+      ok: true;
+      data: CurrentUserResponse;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 export type AnalysisApiResult =
   | {
       ok: true;
@@ -66,6 +86,18 @@ export type BrowserCrawlerImportResult =
       ok: false;
       error: string;
     };
+
+export async function fetchCurrentUser(): Promise<CurrentUserApiResult> {
+  try {
+    const response = await fetch(`/api/me?ts=${Date.now()}`, { cache: "no-store" });
+    const payload = await readJsonResponse<CurrentUserResponse, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(payload)) return { ok: false, error: payload.error };
+    return { ok: true, data: payload };
+  } catch {
+    return { ok: false, error: "The session request failed before the API could respond." };
+  }
+}
 
 export async function fetchWorkspace(): Promise<WorkspaceApiResult> {
   try {
