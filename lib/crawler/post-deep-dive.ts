@@ -1,3 +1,5 @@
+import type { Prisma } from "@prisma/client";
+
 import { prisma } from "@/lib/db/prisma";
 import { fetchRedditPostDeepDive, RedditFetchError, type RedditPostDeepDive } from "@/lib/reddit";
 
@@ -27,6 +29,11 @@ function estimateVotes(score: number, ratio: number | null): VoteEstimate {
   return { estimatedUpvotes, estimatedDownvotes };
 }
 
+function toInputJson(value: unknown): Prisma.InputJsonValue | undefined {
+  if (!value || typeof value !== "object") return undefined;
+  return JSON.parse(JSON.stringify(value)) as Prisma.InputJsonValue;
+}
+
 export async function savePostDeepDiveResult(jobId: string, deepDive: RedditPostDeepDive): Promise<{ comments: number }> {
   const running = await prisma.postDeepDiveJob.findUniqueOrThrow({
     where: { id: jobId },
@@ -34,6 +41,9 @@ export async function savePostDeepDiveResult(jobId: string, deepDive: RedditPost
   });
   const estimate = estimateVotes(deepDive.post.score, deepDive.post.upvoteRatio);
   const capturedAt = new Date();
+  const viewCount = deepDive.insights?.viewCount ?? null;
+  const shareCount = deepDive.insights?.shareCount ?? null;
+  const insightRaw = toInputJson(deepDive.insights?.raw ?? null);
 
   await prisma.$transaction(async (tx) => {
     await tx.postSnapshot.update({
@@ -46,6 +56,9 @@ export async function savePostDeepDiveResult(jobId: string, deepDive: RedditPost
         refreshedUpvoteRatio: deepDive.post.upvoteRatio,
         estimatedUpvotes: estimate.estimatedUpvotes,
         estimatedDownvotes: estimate.estimatedDownvotes,
+        latestViewCount: viewCount,
+        latestShareCount: shareCount,
+        latestInsightAt: viewCount !== null || shareCount !== null ? capturedAt : undefined,
       },
     });
 
@@ -57,6 +70,10 @@ export async function savePostDeepDiveResult(jobId: string, deepDive: RedditPost
         upvoteRatio: deepDive.post.upvoteRatio,
         estimatedUpvotes: estimate.estimatedUpvotes,
         estimatedDownvotes: estimate.estimatedDownvotes,
+        viewCount,
+        shareCount,
+        insightSource: deepDive.insights?.source ?? null,
+        insightRaw,
         capturedAt,
       },
     });
