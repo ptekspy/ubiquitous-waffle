@@ -7,6 +7,7 @@ import { AuthGate } from "@/components/auth-gate";
 import { Dashboard } from "@/components/dashboard";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorCard } from "@/components/error-card";
+import { HistoricalAnalyticsPanel } from "@/components/historical-analytics-panel";
 import { LocalExtensionJobQueue } from "@/components/local-extension-job-queue";
 import { ManualImportCard } from "@/components/manual-import-card";
 import { ProductOpsPanel } from "@/components/product-ops-panel";
@@ -227,6 +228,8 @@ function AuthenticatedDashboard() {
       <ProductOpsPanel extensionState={extensionState} extensionVersion={extensionVersion} username={username} />
 
       <LocalExtensionJobQueue username={username} extensionState={extensionState} scanId={data?.scanId ?? null} onImported={acceptBrowserScheduledScan} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
+
+      <HistoricalAnalyticsPanel />
 
       {data ? <Dashboard data={data} /> : <EmptyState />}
 
