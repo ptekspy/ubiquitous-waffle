@@ -17,6 +17,11 @@ export type AnalysisApiResult =
       error: string;
     };
 
+export type ImportBrowserPayloadOptions = {
+  enqueueDeepDiveJobs?: boolean;
+  enqueuePlannerJob?: boolean;
+};
+
 export type WorkspaceResponse = {
   settings: {
     redditUsername: string | null;
@@ -118,12 +123,12 @@ export async function saveWorkspaceRedditUsername(redditUsername: string): Promi
   }
 }
 
-export async function importBrowserPayload(raw: string): Promise<AnalysisApiResult> {
+export async function importBrowserPayload(raw: string, options: ImportBrowserPayloadOptions = {}): Promise<AnalysisApiResult> {
   try {
     const response = await fetch("/api/analyze/import", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ raw }),
+      body: JSON.stringify({ raw, ...options }),
     });
     const payload = await readJsonResponse<AnalyzeResponse, ApiError>(response, JSON_FALLBACK_ERROR);
 
