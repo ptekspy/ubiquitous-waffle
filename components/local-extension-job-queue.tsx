@@ -24,7 +24,6 @@ type ExtensionCrawlerResponse =
   | { ok: false; status?: string; error: string };
 
 type JobKey = "profile" | "deepDive";
-
 type JobStatus = "waiting" | "running" | "success" | "error";
 
 type JobView = {
@@ -35,6 +34,7 @@ type JobView = {
   lastRunAt: number | null;
   status: JobStatus;
   detail: string;
+  lastDurationMs?: number | null;
 };
 
 const PROFILE_INTERVAL_MS = 15 * 60 * 1000;
@@ -74,7 +74,8 @@ function nextRunAt(lastRunAt: number | null, cadenceMs: number): number {
   return lastRunAt ? lastRunAt + cadenceMs : Date.now();
 }
 
-function duration(ms: number): string {
+function duration(ms: number | null | undefined): string {
+  if (ms === null || ms === undefined) return "—";
   if (ms <= 0) return "now";
   const totalSeconds = Math.ceil(ms / 1000);
   const hours = Math.floor(totalSeconds / 3600);
@@ -101,6 +102,7 @@ function initialJobs(username: string): JobView[] {
       lastRunAt: profileLast,
       status: "waiting",
       detail: "Uses the browser extension and your Reddit browser session.",
+      lastDurationMs: null,
     },
     {
       key: "deepDive",
@@ -110,6 +112,7 @@ function initialJobs(username: string): JobView[] {
       lastRunAt: deepLast,
       status: "waiting",
       detail: "Refreshes post scores, comment counts, replies, and thread comments through the extension.",
+      lastDurationMs: null,
     },
   ];
 }
@@ -148,7 +151,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     setJobs((current) => current.map((job) => (job.key === key ? { ...job, ...patch } : job)));
   }
 
-  function markDone(key: JobKey, detail: string) {
+  function markDone(key: JobKey, detail: string, startedAt: number) {
     const usernameValue = usernameRef.current;
     const cadence = key === "profile" ? profileIntervalMs() : deepDiveIntervalMs();
     const completedAt = Date.now();
@@ -158,6 +161,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       detail,
       lastRunAt: completedAt,
       nextRunAt: completedAt + cadence,
+      lastDurationMs: completedAt - startedAt,
     });
   }
 
@@ -165,6 +169,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     const usernameValue = usernameRef.current;
     if (!usernameValue || !isValidRedditUsername(usernameValue)) return;
 
+    const startedAt = Date.now();
     runningRef.current = "profile";
     updateJob("profile", { status: "running", detail: `Scanning u/${usernameValue} through PaidPolitely Capture.` });
     statusRef.current(`Running profile scan for u/${usernameValue} through the extension.`);
@@ -178,7 +183,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       });
 
       if (!response.ok) {
-        updateJob("profile", { status: "error", detail: response.error });
+        updateJob("profile", { status: "error", detail: response.error, lastDurationMs: Date.now() - startedAt });
         statusRef.current(response.error);
         return;
       }
@@ -189,13 +194,13 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       });
 
       if (!imported.ok) {
-        updateJob("profile", { status: "error", detail: imported.error });
+        updateJob("profile", { status: "error", detail: imported.error, lastDurationMs: Date.now() - startedAt });
         statusRef.current(imported.error);
         return;
       }
 
       importedRef.current(imported.data);
-      markDone("profile", `Saved profile metric point for u/${imported.data.profile.username}.`);
+      markDone("profile", `Saved profile metric point for u/${imported.data.profile.username}.`, startedAt);
       statusRef.current(`Saved scheduled profile metric point for u/${imported.data.profile.username}.`);
     } finally {
       runningRef.current = null;
@@ -208,6 +213,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       return;
     }
 
+    const startedAt = Date.now();
     runningRef.current = "deepDive";
     updateJob("deepDive", { status: "running", detail: "Claiming due post deep-dive jobs." });
     statusRef.current("Running extension-backed post deep-dive batch.");
@@ -218,7 +224,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       for (let index = 0; index < DEEP_DIVE_BATCH_SIZE; index += 1) {
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok) {
-          updateJob("deepDive", { status: "error", detail: claim.error });
+          updateJob("deepDive", { status: "error", detail: claim.error, lastDurationMs: Date.now() - startedAt });
           statusRef.current(claim.error);
           return;
         }
@@ -234,14 +240,14 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         } as never);
 
         if (!response.ok) {
-          updateJob("deepDive", { status: "error", detail: response.error });
+          updateJob("deepDive", { status: "error", detail: response.error, lastDurationMs: Date.now() - startedAt });
           statusRef.current(response.error);
           return;
         }
 
         const imported = await importBrowserCrawlerPayload(claim.job.id, response.payload);
         if (!imported.ok) {
-          updateJob("deepDive", { status: "error", detail: imported.error });
+          updateJob("deepDive", { status: "error", detail: imported.error, lastDurationMs: Date.now() - startedAt });
           statusRef.current(imported.error);
           return;
         }
@@ -250,11 +256,17 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       }
 
       if (completed > 0) await refreshRef.current();
-      markDone("deepDive", completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.` : "No post deep dives were due.");
+      markDone("deepDive", completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.` : "No post deep dives were due.", startedAt);
       statusRef.current(completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.` : "No post deep dives were due.");
     } finally {
       runningRef.current = null;
     }
+  }
+
+  function runNow(key: JobKey) {
+    if (!isReady || runningRef.current) return;
+    updateJob(key, { nextRunAt: Date.now(), status: "waiting", detail: key === "profile" ? "Manual profile scan requested." : "Manual deep-dive batch requested." });
+    setNow(Date.now());
   }
 
   useEffect(() => {
@@ -309,7 +321,20 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
               <span className={statusClass(job.status)}>{job.status}</span>
             </div>
             <p className="mb-3 text-sm leading-relaxed text-[var(--text-muted)]">{job.detail}</p>
-            <p className="mb-0 text-sm font-bold text-[var(--text)]">Next: {job.status === "running" ? "running now" : duration(job.nextRunAt - now)}</p>
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="text-sm font-bold text-[var(--text)]">
+                <span>Next: {job.status === "running" ? "running now" : duration(job.nextRunAt - now)}</span>
+                <span className="ml-3 text-[var(--text-muted)]">Last duration: {duration(job.lastDurationMs)}</span>
+              </div>
+              <button
+                className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50"
+                type="button"
+                disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)}
+                onClick={() => runNow(job.key)}
+              >
+                Run now
+              </button>
+            </div>
           </article>
         ))}
       </div>
