@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 192 192" role="img" aria-label="PaidPolitely maskable icon">
+  <rect width="192" height="192" fill="#F7F8FB"/>
+  <rect x="28" y="28" width="136" height="136" rx="38" fill="#0F172A"/>
+  <path d="M71 128V63h34c16 0 26 9 26 23s-10 23-26 23H88v19H71Zm17-35h16c6 0 10-3 10-7s-4-7-10-7H88v14Z" fill="#E83E8C"/>
+  <path d="M61 112c22 18 55 20 78 2" fill="none" stroke="#FCE7F3" stroke-width="8" stroke-linecap="round" opacity=".9"/>
+  <circle cx="136" cy="109" r="8" fill="#FCE7F3"/>
+</svg>
