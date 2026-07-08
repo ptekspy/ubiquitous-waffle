@@ -15,6 +15,7 @@ const navigationGroups: NavigationGroup[] = [
       { label: "Capture", href: "#capture" },
       { label: "Product Ops", href: "#product-ops", badge: "new" },
       { label: "Local Queue", href: "#local-queue" },
+      { label: "History Import", href: "#historical-analytics", badge: "new" },
     ],
   },
   {
