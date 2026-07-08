@@ -37,7 +37,33 @@ function toProfile(account: LatestScanRecord["account"]): RedditProfile {
   };
 }
 
+async function activeAccountIdForUser(userId: string): Promise<string | null> {
+  const rows = await prisma.$queryRaw<Array<{ activeAccountId: string | null }>>`
+    SELECT "activeAccountId" FROM "WorkspaceSetting" WHERE "ownerUserId" = ${userId} LIMIT 1
+  `.catch(() => []);
+
+  return rows[0]?.activeAccountId ?? null;
+}
+
 async function findLatestScanForUser(userId: string) {
+  const activeAccountId = await activeAccountIdForUser(userId);
+
+  const activeScan = activeAccountId
+    ? await prisma.accountScan.findFirst({
+        where: {
+          accountId: activeAccountId,
+          account: { ownerUserId: userId },
+        },
+        include: {
+          account: true,
+          plannerJobs: { orderBy: { createdAt: "desc" }, take: 1 },
+        },
+        orderBy: { fetchedAt: "desc" },
+      })
+    : null;
+
+  if (activeScan) return activeScan;
+
   return prisma.accountScan.findFirst({
     where: {
       account: {
