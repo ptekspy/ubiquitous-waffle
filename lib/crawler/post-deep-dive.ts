@@ -44,6 +44,7 @@ export async function savePostDeepDiveResult(jobId: string, deepDive: RedditPost
   const viewCount = deepDive.insights?.viewCount ?? null;
   const shareCount = deepDive.insights?.shareCount ?? null;
   const insightRaw = toInputJson(deepDive.insights?.raw ?? null);
+  const hasVisibleInsights = viewCount !== null || shareCount !== null;
 
   await prisma.$transaction(async (tx) => {
     await tx.postSnapshot.update({
@@ -56,9 +57,9 @@ export async function savePostDeepDiveResult(jobId: string, deepDive: RedditPost
         refreshedUpvoteRatio: deepDive.post.upvoteRatio,
         estimatedUpvotes: estimate.estimatedUpvotes,
         estimatedDownvotes: estimate.estimatedDownvotes,
-        latestViewCount: viewCount,
-        latestShareCount: shareCount,
-        latestInsightAt: viewCount !== null || shareCount !== null ? capturedAt : undefined,
+        ...(viewCount !== null ? { latestViewCount: viewCount } : {}),
+        ...(shareCount !== null ? { latestShareCount: shareCount } : {}),
+        ...(hasVisibleInsights ? { latestInsightAt: capturedAt } : {}),
       },
     });
 
