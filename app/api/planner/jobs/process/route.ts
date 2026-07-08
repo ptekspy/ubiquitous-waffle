@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { recoverStalePlannerJobs } from "@/lib/planner/recovery";
 import { processNextPlannerJob } from "@/lib/planner/queue";
 
 export const dynamic = "force-dynamic";
@@ -21,8 +22,9 @@ export async function POST(request: NextRequest): Promise<NextResponse> {
   }
 
   try {
+    const recovered = await recoverStalePlannerJobs();
     const result = await processNextPlannerJob();
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, recovered });
   } catch (error) {
     const message = error instanceof Error ? error.message : "Unable to process planner queue.";
     return NextResponse.json<ErrorResponse>({ error: message }, { status: 500 });
