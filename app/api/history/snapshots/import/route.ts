@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireCurrentUser } from "@/lib/auth/session";
-import { importHistoricalSnapshot, listHistoricalSnapshots, reparseHistoricalSnapshotFollowers, type ReparseFollowerResult, type SnapshotImportResult } from "@/lib/history/snapshots";
+import { importHistoricalSnapshot, importHistoricalSnapshotsFromFolder, listHistoricalSnapshots, reparseHistoricalSnapshotFollowers, type FolderSnapshotImportResult, type ReparseFollowerResult, type SnapshotImportResult } from "@/lib/history/snapshots";
 
 export const dynamic = "force-dynamic";
 
@@ -9,6 +9,11 @@ type ErrorResponse = { error: string };
 
 type SnapshotListResponse = {
   snapshots: Awaited<ReturnType<typeof listHistoricalSnapshots>>;
+};
+
+type FolderImportRequest = {
+  username?: unknown;
+  directory?: unknown;
 };
 
 function parseLocalDateTime(dateValue: string, timeValue: string, timezone = "Europe/London"): Date {
@@ -90,6 +95,21 @@ export async function POST(request: NextRequest): Promise<NextResponse<SnapshotI
     return NextResponse.json(result);
   } catch (error) {
     return NextResponse.json<ErrorResponse>({ error: error instanceof Error ? error.message : "Unable to import historical snapshot." }, { status: 400 });
+  }
+}
+
+export async function PUT(request: NextRequest): Promise<NextResponse<FolderSnapshotImportResult | ErrorResponse>> {
+  const user = await requireCurrentUser().catch(() => null);
+  if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
+
+  try {
+    const body = await request.json().catch(() => ({})) as FolderImportRequest;
+    const username = typeof body.username === "string" && body.username.trim().length > 0 ? body.username.trim().replace(/^u\//i, "") : null;
+    const directory = typeof body.directory === "string" && body.directory.trim().length > 0 ? body.directory.trim() : null;
+    const result = await importHistoricalSnapshotsFromFolder({ ownerUserId: user.id, username, directory });
+    return NextResponse.json(result);
+  } catch (error) {
+    return NextResponse.json<ErrorResponse>({ error: error instanceof Error ? error.message : "Unable to import snapshots from folder." }, { status: 500 });
   }
 }
 
