@@ -5,5 +5,5 @@ export type ErrorCardProps = {
 };
 
 export function ErrorCard({ message }: ErrorCardProps) {
-  return <div className={`${cardClass} mb-[18px] border-[#ff7878]/50 p-[26px] text-[#ff7878]`}>{message}</div>;
+  return <div className={`${cardClass} mb-4 border-[var(--issue)] bg-[var(--issue-soft)] p-4 text-[var(--issue)]`}>{message}</div>;
 }
