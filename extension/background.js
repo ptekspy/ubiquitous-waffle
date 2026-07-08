@@ -1,4 +1,5 @@
 const REDDIT_PROFILE_URL = "https://www.reddit.com/user/{username}/submitted/";
+const REDDIT_PROFILE_STATS_URL = "https://www.reddit.com/user/{username}/";
 const OVERLAY_TIMEOUT_MS = 10 * 60 * 1000;
 const TAB_LOAD_TIMEOUT_MS = 45 * 1000;
 const REDDIT_JSON_LIMIT = 100;
@@ -57,7 +58,14 @@ async function handleMessage(message) {
 }
 
 function normaliseUsername(value) {
-  const username = String(value || "").trim().replace(/^https?:\/\/(www\.)?reddit\.com\/user\//i, "").replace(/^https?:\/\/(www\.)?reddit\.com\/u\//i, "").replace(/^u\//i, "").replace(/^@/, "").split(/[/?#]/)[0];
+  const username = String(value || "")
+    .trim()
+    .replace(/^https?:\/\/(www\.)?reddit\.com\/user\//i, "")
+    .replace(/^https?:\/\/(www\.)?reddit\.com\/u\//i, "")
+    .replace(/^u\//i, "")
+    .replace(/^@/, "")
+    .split(/[/?#]/)[0];
+
   return /^[A-Za-z0-9_-]{3,20}$/.test(username) ? username : "";
 }
 
@@ -76,10 +84,11 @@ async function scanRedditProfileWithoutTab(username) {
   const submittedUrl = `https://www.reddit.com/user/${encodedUsername}/submitted.json`;
   const commentsUrl = `https://www.reddit.com/user/${encodedUsername}/comments.json`;
 
-  const [aboutResult, submittedResult, commentsResult] = await Promise.all([
+  const [aboutResult, submittedResult, commentsResult, followerResult] = await Promise.all([
     fetchRedditJson(aboutUrl),
     fetchRedditListing(submittedUrl, REDDIT_JSON_MAX_PAGES),
     fetchRedditListing(commentsUrl, REDDIT_JSON_MAX_PAGES),
+    fetchProfileFollowerCountFromBackgroundTab(username).catch((error) => ({ ok: false, error: error?.message || "Follower tab scrape failed." })),
   ]);
 
   if (!submittedResult.ok && !commentsResult.ok) {
@@ -91,6 +100,10 @@ async function scanRedditProfileWithoutTab(username) {
   }
 
   const profile = aboutResult.ok ? toHeadlessProfile(aboutResult.data, username) : fallbackProfile(username);
+  if (followerResult.ok && typeof followerResult.followerCount === "number") {
+    profile.followerCount = followerResult.followerCount;
+  }
+
   const posts = submittedResult.ok ? submittedResult.children.map(toHeadlessPost).filter(Boolean) : [];
   const comments = commentsResult.ok ? commentsResult.children.map(toHeadlessComment).filter(Boolean) : [];
 
@@ -106,7 +119,7 @@ async function scanRedditProfileWithoutTab(username) {
     ok: true,
     status: "captured_headless",
     payload: {
-      source: "paidpolitely-reddit-extension-headless-v2",
+      source: "paidpolitely-reddit-extension-headless-v3",
       capturedAt: new Date().toISOString(),
       username,
       profile,
@@ -121,9 +134,34 @@ async function scanRedditProfileWithoutTab(username) {
           submittedTruncated: submittedResult.ok ? Boolean(submittedResult.after) : false,
           commentsTruncated: commentsResult.ok ? Boolean(commentsResult.after) : false,
         },
+        followerScrape: {
+          attempted: true,
+          ok: Boolean(followerResult.ok),
+          source: followerResult.ok ? followerResult.source : null,
+          error: followerResult.ok ? null : followerResult.error,
+        },
       },
     },
   };
+}
+
+async function fetchProfileFollowerCountFromBackgroundTab(username) {
+  const url = REDDIT_PROFILE_STATS_URL.replace("{username}", encodeURIComponent(username));
+  const tab = await chrome.tabs.create({ url, active: false });
+
+  try {
+    await waitForTabLoad(tab.id);
+    await delay(2200);
+    const result = await runInTab(tab.id, scrapeProfileFollowerCountInPage, [username]);
+
+    if (result && typeof result.followerCount === "number") {
+      return { ok: true, followerCount: result.followerCount, source: result.source || "profile-page" };
+    }
+
+    return { ok: false, error: result?.error || "Follower count was not visible on the profile page." };
+  } finally {
+    if (tab?.id) await chrome.tabs.remove(tab.id).catch(() => undefined);
+  }
 }
 
 async function fetchRedditListing(baseUrl, maxPages) {
@@ -139,10 +177,7 @@ async function fetchRedditListing(baseUrl, maxPages) {
 
     const result = await fetchRedditJson(url.toString());
     if (!result.ok) {
-      if (children.length > 0) {
-        return { ok: true, children, pages, after, truncated: true, error: result.error };
-      }
-
+      if (children.length > 0) return { ok: true, children, pages, after, truncated: true, error: result.error };
       return result;
     }
 
@@ -169,9 +204,7 @@ async function fetchRedditJson(url) {
       },
     });
 
-    if (!response.ok) {
-      return { ok: false, status: response.status, error: `Reddit returned HTTP ${response.status}.` };
-    }
+    if (!response.ok) return { ok: false, status: response.status, error: `Reddit returned HTTP ${response.status}.` };
 
     const data = await response.json();
     return { ok: true, data };
@@ -193,6 +226,9 @@ function fallbackProfile(username) {
     totalKarma: 0,
     linkKarma: 0,
     commentKarma: 0,
+    awardeeKarma: 0,
+    awarderKarma: 0,
+    followerCount: null,
     over18: false,
     iconUrl: null,
   };
@@ -211,6 +247,9 @@ function toHeadlessProfile(value, fallbackUsername) {
     totalKarma: asNumber(data.total_karma, linkKarma + commentKarma),
     linkKarma,
     commentKarma,
+    awardeeKarma: asNumber(data.awardee_karma, 0),
+    awarderKarma: asNumber(data.awarder_karma, 0),
+    followerCount: null,
     over18: Boolean(data.over_18),
     iconUrl: typeof data.icon_img === "string" && data.icon_img.length > 0 ? data.icon_img : null,
   };
@@ -235,6 +274,11 @@ function toHeadlessPost(child) {
     createdUtc: asNumber(data.created_utc, Math.floor(Date.now() / 1000)),
     score: asNumber(data.score, 0),
     numComments: asNumber(data.num_comments, 0),
+    upvoteRatio: typeof data.upvote_ratio === "number" ? data.upvote_ratio : null,
+    linkFlairText: typeof data.link_flair_text === "string" ? data.link_flair_text : null,
+    over18: Boolean(data.over_18),
+    isSelf: Boolean(data.is_self),
+    domain: typeof data.domain === "string" ? data.domain : null,
     postHint: typeof data.post_hint === "string" ? data.post_hint : null,
   };
 }
@@ -274,8 +318,12 @@ function canonicalRedditUrl(value) {
 function asNumber(value, fallback = 0) {
   if (typeof value === "number" && Number.isFinite(value)) return value;
   if (typeof value === "string") {
-    const parsed = Number.parseFloat(value.replace(/,/g, ""));
-    if (Number.isFinite(parsed)) return parsed;
+    const token = value.trim().toLowerCase().replace(/,/g, "").match(/-?\d+(?:\.\d+)?\s*[kmb]?/)?.[0]?.replace(/\s/g, "");
+    if (token) {
+      const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : token.endsWith("b") ? 1000000000 : 1;
+      const parsed = Number.parseFloat(token);
+      if (Number.isFinite(parsed)) return Math.round(parsed * multiplier);
+    }
   }
   return fallback;
 }
@@ -304,12 +352,10 @@ async function scanRedditProfileFromTab(username, options = { openInBackground: 
     const action = await withTimeout(
       runInTab(tab.id, showRedditSignpostOverlayInPage, [preflight.reason]),
       OVERLAY_TIMEOUT_MS,
-      "Timed out waiting for the user to sign in to Reddit."
+      "Timed out waiting for the user to sign in to Reddit.",
     );
 
-    if (action?.action === "cancel") {
-      return { ok: false, status: "cancelled", error: "Reddit scan cancelled before sign-in completed." };
-    }
+    if (action?.action === "cancel") return { ok: false, status: "cancelled", error: "Reddit scan cancelled before sign-in completed." };
 
     await waitForTabLoad(tab.id).catch(() => undefined);
     await delay(1500);
@@ -349,9 +395,7 @@ async function findOrOpenRedditProfileTab(username, options = { active: false })
   });
 
   if (existingProfileTab?.id) {
-    if (existingProfileTab.discarded) {
-      await chrome.tabs.reload(existingProfileTab.id).catch(() => undefined);
-    }
+    if (existingProfileTab.discarded) await chrome.tabs.reload(existingProfileTab.id).catch(() => undefined);
     return existingProfileTab;
   }
 
@@ -362,9 +406,7 @@ async function findOrOpenRedditProfileTab(username, options = { active: false })
 async function focusTab(tab) {
   if (!tab?.id) return;
   await chrome.tabs.update(tab.id, { active: true });
-  if (tab.windowId !== undefined) {
-    await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined);
-  }
+  if (tab.windowId !== undefined) await chrome.windows.update(tab.windowId, { focused: true }).catch(() => undefined);
 }
 
 function waitForTabLoad(tabId) {
@@ -420,7 +462,7 @@ function withTimeout(promise, timeoutMs, message) {
       (error) => {
         clearTimeout(timeout);
         reject(error);
-      }
+      },
     );
   });
 }
@@ -438,7 +480,7 @@ function preflightRedditProfileInPage(expectedUsername) {
     document.querySelector("shreddit-post") ||
       document.querySelector('[data-testid="post-container"]') ||
       document.querySelector('article a[href*="/comments/"]') ||
-      document.querySelector('a[href*="/comments/"]')
+      document.querySelector('a[href*="/comments/"]'),
   );
 
   if (path.includes("/login") || bodyText.includes("log in to reddit") || bodyText.includes("sign up to reddit")) {
@@ -453,10 +495,7 @@ function preflightRedditProfileInPage(expectedUsername) {
     return { status: "profile_unavailable", reason: "Reddit says this profile is unavailable." };
   }
 
-  if (hasPostLikeNodes || profilePathMatches) {
-    return { status: "ready", reason: "Reddit profile is ready to scan." };
-  }
-
+  if (hasPostLikeNodes || profilePathMatches) return { status: "ready", reason: "Reddit profile is ready to scan." };
   return { status: "unknown_error", reason: "Reddit loaded, but the extension could not recognise the profile page." };
 }
 
@@ -503,16 +542,100 @@ function showRedditSignpostOverlayInPage(reason) {
   });
 }
 
+async function scrapeProfileFollowerCountInPage(expectedUsername) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const numberFrom = (value) => {
+    const token = String(value ?? "")
+      .trim()
+      .toLowerCase()
+      .replace(/,/g, "")
+      .match(/\d+(?:\.\d+)?\s*[kmb]?/)?.[0]
+      ?.replace(/\s/g, "");
+    if (!token) return null;
+    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : token.endsWith("b") ? 1000000000 : 1;
+    const parsed = parseFloat(token);
+    return Number.isFinite(parsed) ? Math.round(parsed * multiplier) : null;
+  };
+  const fromFollowerText = (value) => {
+    const text = String(value || "").replace(/\s+/g, " ").trim();
+    if (!/followers?/i.test(text)) return null;
+
+    const beforeLabel = text.match(/(\d[\d,.]*\s*[kmb]?)\s+followers?/i);
+    if (beforeLabel) return numberFrom(beforeLabel[1]);
+
+    const afterLabel = text.match(/followers?\s+(\d[\d,.]*\s*[kmb]?)/i);
+    if (afterLabel) return numberFrom(afterLabel[1]);
+
+    return null;
+  };
+  const inspectNode = (node) => {
+    if (!node) return null;
+    const values = [node.textContent, node.getAttribute?.("aria-label"), node.getAttribute?.("title"), node.getAttribute?.("data-testid"), node.parentElement?.textContent, node.closest?.("section, aside, div")?.textContent].filter(Boolean);
+
+    for (const value of values) {
+      const parsed = fromFollowerText(value);
+      if (parsed !== null) return parsed;
+    }
+
+    return null;
+  };
+  const selectors = [
+    '[data-testid*="follower" i]',
+    '[aria-label*="follower" i]',
+    '[title*="follower" i]',
+    'a[href*="followers"]',
+    'span',
+    'p',
+    'div',
+  ];
+
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    for (const selector of selectors) {
+      let nodes = [];
+      try {
+        nodes = Array.from(document.querySelectorAll(selector));
+      } catch {
+        nodes = [];
+      }
+
+      for (const node of nodes.slice(0, 900)) {
+        const parsed = inspectNode(node);
+        if (parsed !== null) return { followerCount: parsed, source: `selector:${selector}` };
+      }
+    }
+
+    const bodyLines = (document.body?.innerText || "").split("\n").map((line) => line.trim()).filter(Boolean);
+    for (const line of bodyLines) {
+      const parsed = fromFollowerText(line);
+      if (parsed !== null) return { followerCount: parsed, source: "body-line" };
+    }
+
+    await sleep(650);
+  }
+
+  return { followerCount: null, source: null, error: `Could not find follower count for u/${expectedUsername}.` };
+}
+
 async function captureRedditProfileInPage(expectedUsername) {
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const text = (node) => node?.textContent?.trim() ?? "";
   const numberFrom = (value) => {
     const raw = String(value ?? "").trim().toLowerCase().replace(/,/g, "");
-    const match = raw.match(/-?\d+(?:\.\d+)?\s*[km]?/);
+    const match = raw.match(/-?\d+(?:\.\d+)?\s*[kmb]?/);
     if (!match) return 0;
     const token = match[0].replace(/\s/g, "");
-    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : 1;
+    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : token.endsWith("b") ? 1000000000 : 1;
     return Math.round(parseFloat(token) * multiplier);
+  };
+  const followerCountFromPage = () => {
+    const bodyLines = (document.body?.innerText || "").split("\n").map((line) => line.trim()).filter(Boolean);
+    for (const line of bodyLines) {
+      const before = line.match(/(\d[\d,.]*\s*[kmb]?)\s+followers?/i);
+      if (before) return numberFrom(before[1]);
+      const after = line.match(/followers?\s+(\d[\d,.]*\s*[kmb]?)/i);
+      if (after) return numberFrom(after[1]);
+    }
+    return null;
   };
   const absolute = (href) => {
     if (!href) return "";
@@ -599,9 +722,7 @@ async function captureRedditProfileInPage(expectedUsername) {
       const key = idFromHref || canonical(href) || id;
       const post = { id, title, subreddit, permalink: canonical(href), score, numComments, createdUtc };
       const existing = postsByKey.get(key);
-      if (!existing || post.score + post.numComments > existing.score + existing.numComments) {
-        postsByKey.set(key, post);
-      }
+      if (!existing || post.score + post.numComments > existing.score + existing.numComments) postsByKey.set(key, post);
     }
   };
   const findScrollTarget = () => {
@@ -633,6 +754,7 @@ async function captureRedditProfileInPage(expectedUsername) {
     };
   };
 
+  const profileFollowerCount = followerCountFromPage();
   const scroller = findScrollTarget();
   const startingScrollY = scroller.top;
   let lastHeight = 0;
@@ -671,10 +793,10 @@ async function captureRedditProfileInPage(expectedUsername) {
   document.getElementById("paidpolitely-capture-progress")?.remove();
 
   return {
-    source: "paidpolitely-reddit-extension-capture-v3",
+    source: "paidpolitely-reddit-extension-capture-v4",
     capturedAt: new Date().toISOString(),
     username,
-    profile: { username },
+    profile: { username, followerCount: profileFollowerCount },
     posts: Array.from(postsByKey.values()),
     comments: [],
   };
