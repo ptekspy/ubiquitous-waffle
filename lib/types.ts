@@ -106,9 +106,80 @@ export type AccountMetricPoint = {
   followerCount: number | null;
 };
 
+export type AccountMetricEvent = {
+  id: string;
+  capturedAt: string;
+  type: "post" | "scan" | "spike";
+  label: string;
+  detail: string;
+  value?: number | null;
+};
+
 export type AccountMetricHistory = {
   window: "hour" | "day" | "week";
   points: AccountMetricPoint[];
+  events?: AccountMetricEvent[];
+};
+
+export type InsightSeverity = "good" | "watch" | "neutral";
+
+export type DashboardInsight = {
+  id: string;
+  severity: InsightSeverity;
+  title: string;
+  detail: string;
+  timestamp: string;
+};
+
+export type PostImpactRow = {
+  id: string;
+  title: string;
+  subreddit: string;
+  permalink: string;
+  createdAt: string;
+  score: number;
+  comments: number;
+  refreshedScore: number | null;
+  refreshedComments: number | null;
+  followerGain: number | null;
+  karmaGain: number | null;
+  impactScore: number;
+  confidence: "low" | "medium" | "high";
+};
+
+export type SubredditRoiRow = {
+  subreddit: string;
+  posts: number;
+  comments: number;
+  totalScore: number;
+  averagePostScore: number;
+  averageCommentScore: number;
+  followerGain: number | null;
+  roiScore: number;
+  recommendation: "double-down" | "test-more" | "pause";
+};
+
+export type PostingHeatmapCell = {
+  day: number;
+  dayLabel: string;
+  hour: number;
+  posts: number;
+  totalScore: number;
+  averageScore: number;
+  totalComments: number;
+};
+
+export type DashboardInsightsResponse = {
+  generatedAt: string;
+  account: {
+    id: string;
+    username: string;
+  } | null;
+  insights: DashboardInsight[];
+  postImpacts: PostImpactRow[];
+  subredditRoi: SubredditRoiRow[];
+  heatmap: PostingHeatmapCell[];
+  events: AccountMetricEvent[];
 };
 
 export type PlannerJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
