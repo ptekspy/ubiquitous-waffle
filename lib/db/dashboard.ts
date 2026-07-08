@@ -31,6 +31,7 @@ function toProfile(account: LatestScanRecord["account"]): RedditProfile {
     commentKarma: account.commentKarma,
     awardeeKarma: account.awardeeKarma,
     awarderKarma: account.awarderKarma,
+    followerCount: account.followerCount,
     over18: account.over18,
     iconUrl: account.iconUrl,
   };
