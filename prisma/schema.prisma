@@ -108,24 +108,26 @@ model Subreddit {
 }
 
 model RedditAccount {
-  id           String   @id @default(cuid())
-  ownerUserId  String?
-  redditId     String?
-  username     String
-  createdUtc   Int?
-  totalKarma   Int      @default(0)
-  linkKarma    Int      @default(0)
-  commentKarma Int      @default(0)
-  awardeeKarma Int      @default(0)
-  awarderKarma Int      @default(0)
-  over18       Boolean  @default(false)
-  iconUrl      String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
+  id            String   @id @default(cuid())
+  ownerUserId   String?
+  redditId      String?
+  username      String
+  createdUtc    Int?
+  totalKarma    Int      @default(0)
+  linkKarma     Int      @default(0)
+  commentKarma  Int      @default(0)
+  awardeeKarma  Int      @default(0)
+  awarderKarma  Int      @default(0)
+  followerCount Int?
+  over18        Boolean  @default(false)
+  iconUrl       String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
 
-  owner       User?         @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
-  scans       AccountScan[]
-  plannerJobs PlannerJob[]
+  owner           User?                   @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  scans           AccountScan[]
+  metricSnapshots AccountMetricSnapshot[]
+  plannerJobs     PlannerJob[]
 
   @@unique([ownerUserId, username])
   @@index([ownerUserId])
@@ -154,15 +156,37 @@ model AccountScan {
   analytics           Json
   createdAt           DateTime @default(now())
 
-  account              RedditAccount       @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  account              RedditAccount           @relation(fields: [accountId], references: [id], onDelete: Cascade)
   postSnapshots        PostSnapshot[]
   commentSnapshots     CommentSnapshot[]
   subredditSnapshots   SubredditSnapshot[]
   mediaGroups          MediaGroup[]
+  metricSnapshots      AccountMetricSnapshot[]
   plannerJobs          PlannerJob[]
 
   @@index([accountId, fetchedAt])
   @@index([source])
+}
+
+model AccountMetricSnapshot {
+  id            String   @id @default(cuid())
+  accountId     String
+  scanId        String?
+  source        String
+  totalKarma    Int      @default(0)
+  linkKarma     Int      @default(0)
+  commentKarma  Int      @default(0)
+  awardeeKarma  Int      @default(0)
+  awarderKarma  Int      @default(0)
+  followerCount Int?
+  capturedAt    DateTime @default(now())
+  createdAt     DateTime @default(now())
+
+  account RedditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scan    AccountScan?   @relation(fields: [scanId], references: [id], onDelete: SetNull)
+
+  @@index([accountId, capturedAt])
+  @@index([scanId])
 }
 
 model PostSnapshot {
@@ -195,11 +219,11 @@ model PostSnapshot {
   estimatedDownvotes   Int?
   createdAt            DateTime @default(now())
 
-  scan           AccountScan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
-  subredditRow   Subreddit?           @relation(fields: [subredditId], references: [id], onDelete: SetNull)
+  scan            AccountScan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  subredditRow    Subreddit?           @relation(fields: [subredditId], references: [id], onDelete: SetNull)
   metricSnapshots PostMetricSnapshot[]
   threadComments  PostThreadComment[]
-  deepDiveJobs     PostDeepDiveJob[]
+  deepDiveJobs    PostDeepDiveJob[]
 
   @@unique([scanId, redditId])
   @@index([accountId, subreddit])
