@@ -9,6 +9,7 @@ export type RedditProfile = {
   commentKarma: number;
   awardeeKarma: number;
   awarderKarma: number;
+  followerCount: number | null;
   over18: boolean;
   iconUrl: string | null;
 };
@@ -93,6 +94,21 @@ export type AccountAnalytics = {
   contentTypes: ContentTypeMetric[];
   timeline: TimelinePoint[];
   recommendations: string[];
+};
+
+export type AccountMetricPoint = {
+  capturedAt: string;
+  totalKarma: number;
+  linkKarma: number;
+  commentKarma: number;
+  awardeeKarma: number;
+  awarderKarma: number;
+  followerCount: number | null;
+};
+
+export type AccountMetricHistory = {
+  window: "hour" | "day" | "week";
+  points: AccountMetricPoint[];
 };
 
 export type PlannerJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
