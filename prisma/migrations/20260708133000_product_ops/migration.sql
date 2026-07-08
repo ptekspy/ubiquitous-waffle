@@ -92,8 +92,37 @@ CREATE TABLE IF NOT EXISTS "WeeklyReport" (
 CREATE INDEX IF NOT EXISTS "WeeklyReport_ownerUserId_weekStart_idx" ON "WeeklyReport"("ownerUserId", "weekStart");
 CREATE INDEX IF NOT EXISTS "WeeklyReport_accountId_weekStart_idx" ON "WeeklyReport"("accountId", "weekStart");
 
-ALTER TABLE "WorkspaceSetting" ADD CONSTRAINT "WorkspaceSetting_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "PlannedPost" ADD CONSTRAINT "PlannedPost_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "TrackedSubreddit" ADD CONSTRAINT "TrackedSubreddit_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "TrackedPeerAccount" ADD CONSTRAINT "TrackedPeerAccount_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
-ALTER TABLE "WeeklyReport" ADD CONSTRAINT "WeeklyReport_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'WorkspaceSetting_ownerUserId_fkey') THEN
+    ALTER TABLE "WorkspaceSetting" ADD CONSTRAINT "WorkspaceSetting_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'PlannedPost_ownerUserId_fkey') THEN
+    ALTER TABLE "PlannedPost" ADD CONSTRAINT "PlannedPost_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TrackedSubreddit_ownerUserId_fkey') THEN
+    ALTER TABLE "TrackedSubreddit" ADD CONSTRAINT "TrackedSubreddit_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'TrackedPeerAccount_ownerUserId_fkey') THEN
+    ALTER TABLE "TrackedPeerAccount" ADD CONSTRAINT "TrackedPeerAccount_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
+
+DO $$
+BEGIN
+  IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'WeeklyReport_ownerUserId_fkey') THEN
+    ALTER TABLE "WeeklyReport" ADD CONSTRAINT "WeeklyReport_ownerUserId_fkey" FOREIGN KEY ("ownerUserId") REFERENCES "user"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+  END IF;
+END $$;
