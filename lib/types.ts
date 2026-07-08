@@ -116,7 +116,7 @@ export type AccountMetricEvent = {
 };
 
 export type AccountMetricHistory = {
-  window: "hour" | "day" | "week";
+  window: "hour" | "day" | "week" | "all";
   points: AccountMetricPoint[];
   events?: AccountMetricEvent[];
 };
