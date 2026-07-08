@@ -1,4 +1,4 @@
-import type { RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
+import type { JsonObject, RedditAccountData, RedditComment, RedditPost, RedditProfile } from "./types";
 
 const DEFAULT_USER_AGENT = "web:paidpolitely.reddit-analytics:v0.3.0 (by /u/ptekspy)";
 const DEFAULT_BROWSER_USER_AGENT =
@@ -94,10 +94,18 @@ export type RedditThreadComment = {
   distinguished: string | null;
 };
 
+export type RedditPostInsights = {
+  viewCount: number | null;
+  shareCount: number | null;
+  source: string;
+  raw: JsonObject | null;
+};
+
 export type RedditPostDeepDive = {
   post: RedditPost;
   comments: RedditThreadComment[];
   rawCommentCount: number;
+  insights?: RedditPostInsights | null;
 };
 
 export class RedditFetchError extends Error {
@@ -161,225 +169,160 @@ function buildFetchAttempts(path: string): FetchAttempt[] {
       headers: browserHeaders(),
     },
     {
-      label: "api.reddit.com api-style json",
-      url: `https://api.reddit.com${apiRedditPath(path)}`,
+      label: "oauth.reddit.com api path",
+      url: `https://oauth.reddit.com${apiRedditPath(path)}`,
       headers: apiHeaders(),
-    },
-    {
-      label: "api.reddit.com browser-style json",
-      url: `https://api.reddit.com${apiRedditPath(path)}`,
-      headers: browserHeaders(),
     },
   ];
 }
 
-function errorMessageForStatus(status: number): string {
-  if (status === 403) {
-    return "Reddit blocked the public JSON request with a 403.";
-  }
-
-  if (status === 404) {
-    return "Reddit account not found or not publicly available.";
-  }
-
-  if (status === 429) {
-    return "Reddit rate limited the request. Try again shortly.";
-  }
-
-  return `Reddit returned ${status}.`;
-}
-
-export async function redditFetch<T>(path: string): Promise<T> {
+async function fetchRedditJson<T>(path: string): Promise<T> {
+  const attempts = buildFetchAttempts(path);
   const failures: FetchFailure[] = [];
 
-  for (const attempt of buildFetchAttempts(path)) {
+  for (const attempt of attempts) {
     const response = await fetch(attempt.url, {
-      cache: "no-store",
       headers: attempt.headers,
+      cache: "no-store",
     });
 
-    const body = await response.text();
+    if (response.ok) return (await response.json()) as T;
 
-    if (!response.ok) {
-      failures.push({
-        label: attempt.label,
-        status: response.status,
-        body: body.slice(0, 240),
-      });
-      continue;
-    }
-
-    try {
-      return JSON.parse(body) as T;
-    } catch {
-      failures.push({
-        label: attempt.label,
-        status: 502,
-        body: body.slice(0, 240),
-      });
-    }
+    failures.push({
+      label: attempt.label,
+      status: response.status,
+      body: await response.text().catch(() => ""),
+    });
   }
 
-  const lastFailure = failures.at(-1);
-  const status = lastFailure?.status ?? 500;
-
-  if (process.env.REDDIT_DEBUG === "1") {
-    console.warn("Reddit fetch failed", { path, failures });
-  }
-
-  throw new RedditFetchError(errorMessageForStatus(status), status, failures);
+  throw new RedditFetchError("Reddit could not be reached with any supported JSON endpoint.", failures[0]?.status ?? 500, failures);
 }
 
-function toProfile(username: string, raw: RawProfile): RedditProfile {
+function compactUrl(value: string | undefined): string {
+  if (!value) return "";
+  if (value.startsWith("http")) return value;
+  return `https://www.reddit.com${value}`;
+}
+
+function toPost(child: RedditApiResponse<RawPost>): RedditPost | null {
+  const data = child.data;
+  if (!data?.id || !data.title || !data.subreddit || !data.permalink) return null;
+
   return {
-    id: raw.id ?? username,
-    username: raw.name ?? username,
-    createdUtc: raw.created_utc ?? null,
-    totalKarma: raw.total_karma ?? (raw.link_karma ?? 0) + (raw.comment_karma ?? 0),
-    linkKarma: raw.link_karma ?? 0,
-    commentKarma: raw.comment_karma ?? 0,
-    awardeeKarma: raw.awardee_karma ?? 0,
-    awarderKarma: raw.awarder_karma ?? 0,
-    followerCount: typeof raw.subreddit?.subscribers === "number" ? raw.subreddit.subscribers : null,
-    over18: raw.over_18 ?? false,
-    iconUrl: raw.icon_img || null,
+    id: data.id.startsWith("t3_") ? data.id : `t3_${data.id}`,
+    title: data.title,
+    subreddit: data.subreddit,
+    permalink: compactUrl(data.permalink),
+    url: data.url ?? null,
+    createdUtc: data.created_utc ?? 0,
+    score: data.score ?? 0,
+    numComments: data.num_comments ?? 0,
+    upvoteRatio: typeof data.upvote_ratio === "number" ? data.upvote_ratio : null,
+    linkFlairText: data.link_flair_text ?? null,
+    over18: Boolean(data.over_18),
+    isSelf: Boolean(data.is_self),
+    domain: data.domain ?? null,
+    postHint: data.post_hint ?? null,
   };
 }
 
-function toPost(raw: RawPost): RedditPost {
+function toComment(child: RedditApiResponse<RawComment>): RedditComment | null {
+  const data = child.data;
+  if (!data?.id || !data.body || !data.subreddit || !data.permalink) return null;
+
   return {
-    id: raw.id,
-    title: raw.title ?? "Untitled post",
-    subreddit: raw.subreddit ?? "unknown",
-    permalink: raw.permalink ? `https://www.reddit.com${raw.permalink}` : "https://www.reddit.com",
-    url: raw.url ?? null,
-    createdUtc: raw.created_utc ?? 0,
-    score: raw.score ?? 0,
-    numComments: raw.num_comments ?? 0,
-    upvoteRatio: raw.upvote_ratio ?? null,
-    linkFlairText: raw.link_flair_text ?? null,
-    over18: raw.over_18 ?? false,
-    isSelf: raw.is_self ?? false,
-    domain: raw.domain ?? null,
-    postHint: raw.post_hint ?? null,
+    id: data.id.startsWith("t1_") ? data.id : `t1_${data.id}`,
+    body: data.body,
+    subreddit: data.subreddit,
+    permalink: compactUrl(data.permalink),
+    createdUtc: data.created_utc ?? 0,
+    score: data.score ?? 0,
+    linkTitle: data.link_title ?? null,
   };
 }
 
-function toComment(raw: RawComment): RedditComment {
+function toProfile(data: RawProfile, username: string): RedditProfile {
+  const linkKarma = data.link_karma ?? 0;
+  const commentKarma = data.comment_karma ?? 0;
+
   return {
-    id: raw.id,
-    body: raw.body ?? "",
-    subreddit: raw.subreddit ?? "unknown",
-    permalink: raw.permalink ? `https://www.reddit.com${raw.permalink}` : "https://www.reddit.com",
-    createdUtc: raw.created_utc ?? 0,
-    score: raw.score ?? 0,
-    linkTitle: raw.link_title ?? null,
+    id: data.id ?? username,
+    username: data.name ?? username,
+    createdUtc: data.created_utc ?? null,
+    totalKarma: data.total_karma ?? linkKarma + commentKarma,
+    linkKarma,
+    commentKarma,
+    awardeeKarma: data.awardee_karma ?? 0,
+    awarderKarma: data.awarder_karma ?? 0,
+    followerCount: null,
+    over18: Boolean(data.over_18),
+    iconUrl: data.icon_img ?? null,
   };
 }
 
-function toThreadComment(raw: RawThreadComment, fallbackSubreddit: string, depth: number): RedditThreadComment {
-  return {
-    redditId: raw.id.startsWith("t1_") ? raw.id : `t1_${raw.id}`,
-    parentRedditId: raw.parent_id ?? null,
-    author: raw.author ?? null,
-    body: raw.body ?? "",
-    subreddit: raw.subreddit ?? fallbackSubreddit,
-    permalink: raw.permalink ? `https://www.reddit.com${raw.permalink}` : null,
-    createdUtc: raw.created_utc ?? 0,
-    score: raw.score ?? 0,
-    depth: raw.depth ?? depth,
-    isSubmitter: raw.is_submitter ?? false,
-    distinguished: raw.distinguished ?? null,
-  };
-}
-
-function flattenThreadComments(children: Array<RedditApiResponse<RawThreadComment>>, fallbackSubreddit: string, depth = 0): RedditThreadComment[] {
+function flattenComments(children: Array<RedditApiResponse<RawThreadComment>>, fallbackSubreddit: string, depth = 0): RedditThreadComment[] {
   const comments: RedditThreadComment[] = [];
 
   for (const child of children) {
     if (child.kind !== "t1") continue;
+    const data = child.data;
+    if (!data?.id || !data.body) continue;
 
-    comments.push(toThreadComment(child.data, fallbackSubreddit, depth));
+    comments.push({
+      redditId: data.id.startsWith("t1_") ? data.id : `t1_${data.id}`,
+      parentRedditId: data.parent_id ?? null,
+      author: data.author ?? null,
+      body: data.body,
+      subreddit: data.subreddit ?? fallbackSubreddit,
+      permalink: data.permalink ? compactUrl(data.permalink) : null,
+      createdUtc: data.created_utc ?? 0,
+      score: data.score ?? 0,
+      depth: data.depth ?? depth,
+      isSubmitter: Boolean(data.is_submitter),
+      distinguished: data.distinguished ?? null,
+    });
 
-    const replies = child.data.replies;
-    if (typeof replies === "object" && replies?.data?.children) {
-      comments.push(...flattenThreadComments(replies.data.children, fallbackSubreddit, depth + 1));
+    if (typeof data.replies === "object" && Array.isArray(data.replies.data.children)) {
+      comments.push(...flattenComments(data.replies.data.children, fallbackSubreddit, depth + 1));
     }
   }
 
   return comments;
 }
 
-async function fetchListing<T>(username: string, listing: "submitted" | "comments"): Promise<{ items: T[]; warning: string | null }> {
-  const params = new URLSearchParams({
-    limit: String(MAX_LISTING_ITEMS),
-    raw_json: "1",
-  });
+export async function fetchRedditAccountData(username: string): Promise<RedditAccountData> {
+  const profile = await fetchRedditJson<RedditApiResponse<RawProfile>>(`/user/${username}/about.json?raw_json=1`);
+  const submitted = await fetchRedditJson<ListingResponse<RawPost>>(`/user/${username}/submitted.json?limit=${MAX_LISTING_ITEMS}&raw_json=1`);
+  const comments = await fetchRedditJson<ListingResponse<RawComment>>(`/user/${username}/comments.json?limit=${MAX_LISTING_ITEMS}&raw_json=1`);
 
-  try {
-    const response = await redditFetch<ListingResponse<T>>(`/user/${username}/${listing}.json?${params}`);
-    return {
-      items: response.data.children.map((child) => child.data),
-      warning: null,
-    };
-  } catch (error) {
-    if (error instanceof RedditFetchError && [403, 404, 429].includes(error.status)) {
-      return {
-        items: [],
-        warning: `${listing} import skipped: ${error.message}`,
-      };
-    }
-
-    throw error;
-  }
-}
-
-export async function fetchRedditPostDeepDive(postId: string): Promise<RedditPostDeepDive> {
-  const cleanId = postId.replace(/^t3_/, "");
-  const params = new URLSearchParams({
-    limit: String(MAX_THREAD_COMMENTS),
-    raw_json: "1",
-    sort: "top",
-  });
-  const response = await redditFetch<[ListingResponse<RawPost>, ListingResponse<RawThreadComment>]>(`/comments/${cleanId}.json?${params}`);
-  const rawPost = response[0]?.data?.children?.[0]?.data;
-
-  if (!rawPost) {
-    throw new RedditFetchError("Reddit post not found or not publicly available.", 404);
-  }
-
-  const post = toPost(rawPost);
-  const comments = flattenThreadComments(response[1]?.data?.children ?? [], post.subreddit).filter((comment) => comment.createdUtc > 0);
+  const posts = submitted.data.children.map(toPost).filter((post): post is RedditPost => Boolean(post));
+  const commentRows = comments.data.children.map(toComment).filter((comment): comment is RedditComment => Boolean(comment));
 
   return {
-    post,
-    comments,
-    rawCommentCount: response[1]?.data?.children?.length ?? 0,
+    profile: toProfile(profile.data, username),
+    posts,
+    comments: commentRows,
+    warnings: [],
+    source: "reddit-json",
+    capturedAt: new Date().toISOString(),
+    metadata: null,
+    rawPostCount: submitted.data.children.length,
+    rawCommentCount: comments.data.children.length,
   };
 }
 
-export async function fetchRedditAccountData(input: string): Promise<RedditAccountData> {
-  const username = normaliseUsername(input);
-  const profileResponse = await redditFetch<RedditApiResponse<RawProfile>>(
-    `/user/${username}/about.json?raw_json=1`,
-  );
+export async function fetchRedditPostDeepDive(redditId: string): Promise<RedditPostDeepDive> {
+  const cleanId = redditId.replace(/^t3_/, "");
+  const thread = await fetchRedditJson<[ListingResponse<RawPost>, ListingResponse<RawThreadComment>]>(`/comments/${cleanId}.json?limit=${MAX_THREAD_COMMENTS}&sort=top&raw_json=1`);
+  const postChild = thread[0]?.data?.children?.[0];
+  const post = postChild ? toPost(postChild) : null;
 
-  const [submitted, comments] = await Promise.all([
-    fetchListing<RawPost>(username, "submitted"),
-    fetchListing<RawComment>(username, "comments"),
-  ]);
-  const posts = submitted.items.map(toPost).filter((post) => post.createdUtc > 0);
-  const parsedComments = comments.items.map(toComment).filter((comment) => comment.createdUtc > 0);
+  if (!post) throw new RedditFetchError("Reddit did not return a usable post thread.", 404);
 
   return {
-    profile: toProfile(username, profileResponse.data),
-    posts,
-    comments: parsedComments,
-    source: "server-reddit-json",
-    capturedAt: null,
-    metadata: null,
-    rawPostCount: submitted.items.length,
-    rawCommentCount: comments.items.length,
-    warnings: [submitted.warning, comments.warning].filter((warning): warning is string => Boolean(warning)),
+    post,
+    comments: flattenComments(thread[1]?.data?.children ?? [], post.subreddit),
+    rawCommentCount: thread[1]?.data?.children?.length ?? 0,
+    insights: null,
   };
 }
