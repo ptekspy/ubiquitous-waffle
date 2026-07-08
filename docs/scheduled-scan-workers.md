@@ -1,20 +1,26 @@
-# Scheduled scans and deep-dive refreshes
+# Local extension job queue
 
-The app supports two cadences:
+For local development, Reddit-facing scheduled work is handled by the browser and the PaidPolitely Capture extension, not the Node scheduler worker.
 
-- Profile/account scans every 15 minutes by default.
-- Post/thread deep-dive refreshes every 2 hours by default.
+The dashboard shows a **Local extension queue** card with:
 
-There are two different execution contexts:
+- what is currently running
+- the next scheduled job
+- countdowns for each job
+- status for profile scans and post deep dives
 
-- The Node scheduler worker can run server-side profile scans and deep-dive refreshes.
-- Browser-assisted profile scans use the PaidPolitely Capture extension from the signed-in dashboard.
+## Cadences
 
-This matters because Reddit may block server-side profile JSON with a 403. When that happens, the Node worker now logs `browserRequired` instead of crashing. To use the user's Reddit browser session, keep the dashboard open with the extension installed; the dashboard runs a quiet browser-assisted profile scan every 15 minutes and imports the result through `/api/analyze/import`.
+Defaults:
 
-Profile scans create `AccountMetricSnapshot` rows for charting karma and follower/subscriber counts over the past hour, day, or week. They do not enqueue a deep dive for every scan.
+- Profile/account scan: every 15 minutes
+- Post/thread deep dive: every 2 hours
 
-Deep-dive refreshes are handled separately. They process queued post deep-dive jobs first, then enqueue and process one due post snapshot whose `deepDiveFetchedAt` is missing or older than the configured refresh interval.
+Profile scans use the extension and import through `/api/analyze/import` as lightweight scans. They create `AccountMetricSnapshot` rows for karma/follower charts, but they do **not** enqueue deep-dive jobs or planner jobs every 15 minutes.
+
+Deep dives also run through the extension. The browser claims a due post job from `/api/crawler/posts/next`, fetches the Reddit post thread through the extension, then imports the result through `/api/crawler/posts/import`.
+
+`/api/crawler/posts/next` can also create a due deep-dive job when no queued job exists, based on `DEEP_DIVE_REFRESH_INTERVAL_MS`.
 
 ## Run locally
 
@@ -24,39 +30,47 @@ Run the Next app:
 pnpm dev
 ```
 
-Open the dashboard in the browser and make sure PaidPolitely Capture is installed. That browser page handles extension-backed profile scans.
+Then open the dashboard in your browser and keep it open. Make sure PaidPolitely Capture is installed and detected as ready.
 
-Run the scheduler worker in another terminal for deep-dive refreshes and optional server-side profile attempts:
+That is all you need for local scheduled work.
+
+## About `pnpm worker:scheduler`
+
+The server scheduler is disabled by default now, because local mode should use the extension and your browser session.
+
+If you run:
 
 ```bash
 pnpm worker:scheduler
 ```
 
-The worker calls:
+it should print that the server scheduler is disabled and exit without calling Reddit.
 
-```http
-POST /api/scheduler/profile/process
-POST /api/scheduler/deep-dive/process
+Only enable server-side attempts explicitly:
+
+```bash
+SCHEDULER_ENABLE_SERVER_WORKER="1"
+SCHEDULER_PROFILE_SERVER_SCAN="1"
+SCHEDULER_DEEP_DIVE_SERVER_SCAN="1"
+pnpm worker:scheduler
 ```
+
+For the local setup, leave those unset.
 
 ## Environment
 
-Optional values:
+Optional local values:
 
 ```bash
-SCHEDULER_WORKER_TARGET="http://localhost:3000"
-SCHEDULER_WORKER_SECRET=""
-SCHEDULER_WORKER_TICK_MS="60000"
-SCHEDULER_WORKER_ERROR_TICK_MS="30000"
-SCHEDULER_PROFILE_SERVER_SCAN="1"
-PROFILE_SCAN_INTERVAL_MS="900000"
 NEXT_PUBLIC_PROFILE_SCAN_INTERVAL_MS="900000"
+NEXT_PUBLIC_DEEP_DIVE_REFRESH_INTERVAL_MS="7200000"
 DEEP_DIVE_REFRESH_INTERVAL_MS="7200000"
 ```
 
-Set `SCHEDULER_PROFILE_SERVER_SCAN="0"` if Reddit always blocks server-side profile scans and you only want extension-backed profile scans from the open dashboard.
+Intervals are milliseconds:
 
-In production, set `SCHEDULER_WORKER_SECRET`. The scheduler endpoints also accept `CRAWLER_WORKER_SECRET` or `PLANNER_WORKER_SECRET` as a fallback.
+- `900000` = 15 minutes
+- `7200000` = 2 hours
 
 ## Dashboard history API
 
