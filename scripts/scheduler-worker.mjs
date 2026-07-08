@@ -22,8 +22,16 @@ function errorTickMs() {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ERROR_TICK_MS;
 }
 
+function serverWorkerEnabled() {
+  return process.env.SCHEDULER_ENABLE_SERVER_WORKER === "1";
+}
+
 function profileSchedulerEnabled() {
-  return process.env.SCHEDULER_PROFILE_SERVER_SCAN !== "0";
+  return process.env.SCHEDULER_PROFILE_SERVER_SCAN === "1";
+}
+
+function deepDiveSchedulerEnabled() {
+  return process.env.SCHEDULER_DEEP_DIVE_SERVER_SCAN === "1";
 }
 
 function headers() {
@@ -72,6 +80,8 @@ async function runProfileScanTick() {
 }
 
 async function runDeepDiveTick() {
+  if (!deepDiveSchedulerEnabled()) return;
+
   const result = await postJson("/api/scheduler/deep-dive/process");
   if (result?.processed) {
     log(`Deep-dive refresh ${result.mode || "processed"}`, { jobId: result.jobId, status: result.status, comments: result.comments, error: result.error });
@@ -81,7 +91,13 @@ async function runDeepDiveTick() {
 }
 
 async function run() {
-  log(`Scheduler worker started against ${target()}`);
+  if (!serverWorkerEnabled()) {
+    log("Server scheduler is disabled. Local mode uses the dashboard + PaidPolitely Capture extension for profile scans and deep dives.");
+    log("Open the dashboard in your browser and keep it open. Set SCHEDULER_ENABLE_SERVER_WORKER=1 only if you explicitly want server-side attempts.");
+    return;
+  }
+
+  log(`Server scheduler worker started against ${target()}`);
 
   while (!shouldStop) {
     try {
