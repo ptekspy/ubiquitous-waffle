@@ -44,6 +44,12 @@ function AuthenticatedDashboard() {
     void loadWorkspace();
   }, []);
 
+  useEffect(() => {
+    const handler = () => void loadWorkspace();
+    window.addEventListener("paidpolitely-workspace-refresh", handler);
+    return () => window.removeEventListener("paidpolitely-workspace-refresh", handler);
+  }, []);
+
   async function loadWorkspace() {
     setWorkspaceState("loading");
 
