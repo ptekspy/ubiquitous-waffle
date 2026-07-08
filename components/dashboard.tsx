@@ -20,44 +20,39 @@ export type DashboardProps = {
 
 export function Dashboard({ data }: DashboardProps) {
   return (
-    <section className="grid gap-[22px]">
+    <section className="grid gap-4">
       <WarningCard warnings={data.warnings} />
       <DashboardHealthCard analytics={data.analytics} />
       <PlannerCard initialJob={data.plannerJob} />
 
-      <div className={`${cardClass} flex items-center justify-between gap-5 p-[26px] max-sm:flex-col max-sm:items-stretch`}>
+      <section className={`${cardClass} flex items-center justify-between gap-5 p-5 max-sm:flex-col max-sm:items-stretch`}>
         <div>
-          <span className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]">Latest persisted scan</span>
-          <h2 className="my-2 text-[clamp(2rem,4vw,3.2rem)] font-black tracking-[-0.05em]">u/{data.profile.username}</h2>
+          <span className="ui-eyebrow">Latest scan</span>
+          <h2 className="my-2 text-3xl font-extrabold tracking-[-0.05em] text-[var(--text)]">u/{data.profile.username}</h2>
           <p className={mutedClass}>Profile created {formatDate(data.profile.createdUtc)}</p>
           <p className={mutedClass}>Scan fetched {formatDate(Math.floor(new Date(data.analytics.fetchedAt).getTime() / 1000))}</p>
-          {data.scanId ? <p className="mt-2 text-xs text-[#c9adbd]">Saved scan: {data.scanId}</p> : null}
         </div>
-        <div className="min-w-[188px] rounded-3xl bg-linear-to-br from-[#ff4f91]/[0.22] to-[#ffb86b]/[0.22] p-[18px] text-right max-sm:text-left">
-          <span className="block text-sm text-[#c9adbd]">Total karma</span>
-          <strong className="mt-1 block text-3xl font-black">{numberFormat(data.profile.totalKarma)}</strong>
+        <div className="min-w-[188px] rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4 text-right max-sm:text-left">
+          <span className="block text-sm text-[var(--text-muted)]">Total karma</span>
+          <strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{numberFormat(data.profile.totalKarma)}</strong>
         </div>
-      </div>
+      </section>
 
-      <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-6">
+      <div className="stat-grid">
         <StatCard label="Captured posts" value={numberFormat(data.analytics.summary.posts)} detail="Cleaned public rows" />
         <StatCard label="Captured comments" value={numberFormat(data.analytics.summary.comments)} detail="When available" />
         <StatCard label="Avg post score" value={String(data.analytics.summary.averagePostScore)} />
         <StatCard label="Best subreddit" value={data.analytics.summary.bestSubreddit ? `r/${data.analytics.summary.bestSubreddit}` : "N/A"} />
-        <StatCard
-          label="Best UTC hour"
-          value={data.analytics.summary.bestPostingHourUtc === null ? "N/A" : `${data.analytics.summary.bestPostingHourUtc}:00`}
-          detail="From captured posts"
-        />
+        <StatCard label="Best UTC hour" value={data.analytics.summary.bestPostingHourUtc === null ? "N/A" : `${data.analytics.summary.bestPostingHourUtc}:00`} detail="From captured posts" />
         <StatCard label="Captured score" value={compactNumber(data.analytics.summary.totalPostScore)} />
       </div>
 
-      <section className={`${cardClass} bg-linear-to-br from-[#ff4f91]/[0.16] to-[#ffb86b]/10 p-6`}>
+      <section className={`${cardClass} analytics-section p-5`}>
         <PanelHeading eyebrow="Actionable readout" title="Next moves" />
         {data.analytics.recommendations.length === 0 ? (
           <p className={mutedClass}>Not enough public data for recommendations yet.</p>
         ) : (
-          <ul className="grid gap-2.5 pl-5 leading-relaxed text-[#ffe6f0]">
+          <ul className="grid gap-2.5 pl-5 leading-relaxed text-[var(--text)]">
             {data.analytics.recommendations.map((recommendation) => (
               <li className="list-disc" key={recommendation}>{recommendation}</li>
             ))}
@@ -65,28 +60,28 @@ export function Dashboard({ data }: DashboardProps) {
         )}
       </section>
 
-      <section className="grid gap-3.5 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]">
-        <article className={`${cardClass} overflow-hidden p-6`}>
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1.35fr)_minmax(320px,0.65fr)]" id="subreddits">
+        <article className={`${cardClass} analytics-section overflow-hidden p-5`}>
           <PanelHeading eyebrow="Where it works" title="Subreddit performance" />
           <SubredditTable rows={data.analytics.subreddits} />
         </article>
-        <article className={`${cardClass} overflow-hidden p-6`}>
+        <article className={`${cardClass} analytics-section overflow-hidden p-5`}>
           <PanelHeading eyebrow="Format signal" title="Content formats" />
           <ContentTypeList rows={data.analytics.contentTypes} />
         </article>
       </section>
 
-      <section className={`${cardClass} overflow-hidden p-6`}>
+      <section className={`${cardClass} analytics-section overflow-hidden p-5`}>
         <PanelHeading eyebrow="Momentum" title="Recent activity score" />
         <Timeline rows={data.analytics.timeline} />
       </section>
 
-      <section className="grid gap-3.5 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.75fr)]">
-        <article className={`${cardClass} overflow-hidden p-6`}>
+      <section className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(320px,0.75fr)]" id="posts">
+        <article className={`${cardClass} analytics-section overflow-hidden p-5`}>
           <PanelHeading eyebrow="Content intelligence" title="Top posts" />
           <TopPostsList posts={data.analytics.topPosts} />
         </article>
-        <article className={`${cardClass} overflow-hidden p-6`}>
+        <article className={`${cardClass} analytics-section overflow-hidden p-5`} id="comments">
           <PanelHeading eyebrow="Engagement" title="Top comments" />
           <TopCommentsList comments={data.analytics.topComments} />
         </article>
