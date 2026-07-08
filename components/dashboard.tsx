@@ -23,11 +23,15 @@ export type DashboardProps = {
 
 export function Dashboard({ data }: DashboardProps) {
   return (
-    <section className="grid gap-4">
+    <section className="grid gap-4" id="overview">
       <WarningCard warnings={data.warnings} />
       <DashboardHealthCard analytics={data.analytics} />
-      <AccountMetricTrendCard />
-      <AdvancedAnalyticsPanel />
+      <section id="trends" className="analytics-section">
+        <AccountMetricTrendCard />
+      </section>
+      <section id="intelligence" className="analytics-section">
+        <AdvancedAnalyticsPanel />
+      </section>
       <DaresTrackerPanel />
       <PlannerCard initialJob={data.plannerJob} />
 
