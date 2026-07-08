@@ -1,8 +1,10 @@
 "use client";
 
+import { useQuery, useQueryClient } from "@tanstack/react-query";
 import type { ReactNode } from "react";
 import { FormEvent, useState } from "react";
 
+import { currentUserQueryOptions, queryKeys } from "@/lib/api/queries";
 import { authClient } from "@/lib/auth-client";
 import { cardClass, inputClass, mutedClass, primaryButtonClass } from "@/lib/ui/styles";
 import { ThemeToggle } from "./theme-toggle";
@@ -19,7 +21,9 @@ function errorMessage(error: unknown): string {
 }
 
 export function AuthGate({ children }: AuthGateProps) {
+  const queryClient = useQueryClient();
   const session = authClient.useSession();
+  const currentUserQuery = useQuery(currentUserQueryOptions());
   const [mode, setMode] = useState<AuthMode>("signin");
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
@@ -28,6 +32,12 @@ export function AuthGate({ children }: AuthGateProps) {
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [pending, setPending] = useState(false);
+
+  async function refreshAuthState() {
+    await session.refetch();
+    await queryClient.invalidateQueries({ queryKey: queryKeys.currentUser });
+    await queryClient.invalidateQueries({ queryKey: queryKeys.workspace });
+  }
 
   async function signUp(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -74,7 +84,7 @@ export function AuthGate({ children }: AuthGateProps) {
       return;
     }
 
-    await session.refetch();
+    await refreshAuthState();
   }
 
   async function verify(event: FormEvent<HTMLFormElement>) {
@@ -109,7 +119,7 @@ export function AuthGate({ children }: AuthGateProps) {
       return;
     }
 
-    await session.refetch();
+    await refreshAuthState();
   }
 
   async function resendCode() {
@@ -132,7 +142,9 @@ export function AuthGate({ children }: AuthGateProps) {
     setMessage("New verification code printed to the server console.");
   }
 
-  if (session.isPending) {
+  const user = currentUserQuery.data ? currentUserQuery.data.user : (session.data?.user ?? null);
+
+  if (session.isPending && currentUserQuery.isPending) {
     return (
       <main className="grid min-h-screen place-items-center bg-[var(--bg)] px-4 py-10 text-[var(--text)]">
         <section className={`${cardClass} mx-auto max-w-xl p-8`}>
@@ -142,7 +154,7 @@ export function AuthGate({ children }: AuthGateProps) {
     );
   }
 
-  if (session.data?.user) return <>{children}</>;
+  if (user) return <>{children}</>;
 
   return (
     <main className="grid min-h-screen place-items-center bg-[var(--bg)] px-4 py-10 text-[var(--text)] sm:px-6 lg:px-8">
