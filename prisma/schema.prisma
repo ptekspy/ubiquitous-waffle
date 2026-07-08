@@ -34,6 +34,7 @@ model User {
   authAccounts     Account[]
   redditAccounts   RedditAccount[]
   postDeepDiveJobs PostDeepDiveJob[]
+  dareCompletions  DareCompletion[]
 
   @@map("user")
 }
@@ -128,6 +129,7 @@ model RedditAccount {
   scans           AccountScan[]
   metricSnapshots AccountMetricSnapshot[]
   plannerJobs     PlannerJob[]
+  dareCompletions DareCompletion[]
 
   @@unique([ownerUserId, username])
   @@index([ownerUserId])
@@ -163,6 +165,7 @@ model AccountScan {
   mediaGroups          MediaGroup[]
   metricSnapshots      AccountMetricSnapshot[]
   plannerJobs          PlannerJob[]
+  dareCompletions      DareCompletion[]
 
   @@index([accountId, fetchedAt])
   @@index([source])
@@ -219,11 +222,12 @@ model PostSnapshot {
   estimatedDownvotes   Int?
   createdAt            DateTime @default(now())
 
-  scan            AccountScan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
-  subredditRow    Subreddit?           @relation(fields: [subredditId], references: [id], onDelete: SetNull)
-  metricSnapshots PostMetricSnapshot[]
-  threadComments  PostThreadComment[]
-  deepDiveJobs    PostDeepDiveJob[]
+  scan             AccountScan          @relation(fields: [scanId], references: [id], onDelete: Cascade)
+  subredditRow     Subreddit?           @relation(fields: [subredditId], references: [id], onDelete: SetNull)
+  metricSnapshots  PostMetricSnapshot[]
+  threadComments   PostThreadComment[]
+  deepDiveJobs     PostDeepDiveJob[]
+  dareCompletions  DareCompletion[]
 
   @@unique([scanId, redditId])
   @@index([accountId, subreddit])
@@ -293,6 +297,43 @@ model MediaGroup {
 
   @@unique([scanId, mediaKey])
   @@index([accountId, totalScore])
+}
+
+model DareCompletion {
+  id             String   @id @default(cuid())
+  dedupeKey      String   @unique
+  ownerUserId    String?
+  accountId      String
+  scanId         String?
+  postSnapshotId String
+  username       String
+  subreddit      String   @default("daresgonewild")
+  completionType String
+  dareSlug       String?
+  dareName       String?
+  dareLevel      String?
+  darerUsername  String?
+  confidence     Float    @default(1.0)
+  status         String   @default("PENDING")
+  detectedAt     DateTime @default(now())
+  verifiedAt     DateTime?
+  rejectedAt     DateTime?
+  notes          String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  owner   User?         @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  account RedditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
+  scan    AccountScan?  @relation(fields: [scanId], references: [id], onDelete: SetNull)
+  post    PostSnapshot  @relation(fields: [postSnapshotId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId, status])
+  @@index([accountId, detectedAt])
+  @@index([scanId])
+  @@index([postSnapshotId])
+  @@index([dareSlug])
+  @@index([completionType])
+  @@index([status])
 }
 
 model PostMetricSnapshot {
