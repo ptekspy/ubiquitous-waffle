@@ -23,24 +23,24 @@ export function DashboardHealthCard({ analytics }: DashboardHealthCardProps) {
   const bestHour = analytics.summary.bestPostingHourUtc === null ? "Unknown" : `${analytics.summary.bestPostingHourUtc}:00 UTC`;
 
   return (
-    <section className={`${cardClass} grid gap-4 p-6 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(150px,0.4fr))]`}>
+    <section className={`${cardClass} grid gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_repeat(3,minmax(150px,0.4fr))]`}>
       <div>
-        <span className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]">Dashboard health</span>
-        <h2 className="mt-2 mb-2 text-2xl font-black tracking-[-0.04em]">Current account signal</h2>
-        <p className={`${mutedClass} leading-relaxed`}>This is the latest persisted scan for this workspace. Refreshing the scan replaces the live readout while keeping history in PostgreSQL.</p>
+        <span className="ui-eyebrow">Dashboard health</span>
+        <h2 className="mt-2 mb-2 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Current account signal</h2>
+        <p className={`${mutedClass} leading-relaxed`}>This is the latest saved scan for this workspace. Refreshing the scan replaces the live readout while keeping history in PostgreSQL.</p>
       </div>
-      <div className="rounded-3xl border border-white/12 bg-white/[0.045] p-4">
-        <span className="block text-sm text-[#c9adbd]">Best lane</span>
-        <strong className="mt-2 block text-xl">{bestSubreddit}</strong>
+      <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
+        <span className="block text-sm text-[var(--text-muted)]">Best lane</span>
+        <strong className="mt-2 block text-xl text-[var(--text)]">{bestSubreddit}</strong>
       </div>
-      <div className="rounded-3xl border border-white/12 bg-white/[0.045] p-4">
-        <span className="block text-sm text-[#c9adbd]">Best time</span>
-        <strong className="mt-2 block text-xl">{bestHour}</strong>
+      <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
+        <span className="block text-sm text-[var(--text-muted)]">Best time</span>
+        <strong className="mt-2 block text-xl text-[var(--text)]">{bestHour}</strong>
       </div>
-      <div className="rounded-3xl border border-white/12 bg-white/[0.045] p-4">
-        <span className="block text-sm text-[#c9adbd]">Score / comments</span>
-        <strong className="mt-2 block text-xl">{scorePerPost(analytics)}</strong>
-        <small className="text-[#c9adbd]">{commentRate(analytics)}</small>
+      <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
+        <span className="block text-sm text-[var(--text-muted)]">Score / comments</span>
+        <strong className="mt-2 block text-xl text-[var(--text)]">{scorePerPost(analytics)}</strong>
+        <small className="text-[var(--text-muted)]">{commentRate(analytics)}</small>
       </div>
     </section>
   );
