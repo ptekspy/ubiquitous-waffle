@@ -61,6 +61,8 @@ type ReparseResult = {
   zeroAccountFollowersCleared: number;
 };
 
+const DAY_MS = 24 * 60 * 60 * 1000;
+
 const presets: Array<{ key: HistoricalRangePreset; label: string }> = [
   { key: "30d", label: "30d" },
   { key: "90d", label: "90d" },
@@ -94,6 +96,25 @@ function dateTime(value: string): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit" }).format(date);
 }
 
+function dayTime(value: string): number | null {
+  const parsed = new Date(`${value}T00:00:00.000Z`).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function formatDayTick(time: number): string {
+  return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(time));
+}
+
+function uniqueTicks(values: number[]): number[] {
+  const seen = new Set<number>();
+  return values.filter((value) => {
+    const rounded = Math.round(value / DAY_MS) * DAY_MS;
+    if (seen.has(rounded)) return false;
+    seen.add(rounded);
+    return true;
+  });
+}
+
 function metricValue(point: HistoricalPerformancePoint, metric: MetricKey): number | null {
   const value = point[metric];
   return typeof value === "number" && Number.isFinite(value) ? value : null;
@@ -108,8 +129,11 @@ function setupStepClass(done: boolean) {
 }
 
 function HistoricalChart({ points, metric }: { points: HistoricalPerformancePoint[]; metric: MetricKey }) {
-  const values = points.map((point) => metricValue(point, metric)).filter((value): value is number => value !== null);
-  if (values.length < 2) return <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-6 text-sm text-[var(--text-muted)]">Import more snapshots to draw this graph.</div>;
+  const rows = points
+    .map((point) => ({ point, value: metricValue(point, metric), time: dayTime(point.date) }))
+    .filter((row): row is { point: HistoricalPerformancePoint; value: number; time: number } => row.value !== null && row.time !== null);
+
+  if (rows.length < 2) return <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-6 text-sm text-[var(--text-muted)]">Import more snapshots to draw this graph.</div>;
 
   const width = 860;
   const height = 320;
@@ -119,18 +143,32 @@ function HistoricalChart({ points, metric }: { points: HistoricalPerformancePoin
   const bottom = 52;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
+  const values = rows.map((row) => row.value);
   const min = Math.min(0, ...values);
   const max = Math.max(1, ...values);
   const range = Math.max(1, max - min);
-  const chartPoints = values.map((value, index) => ({
-    x: left + (index / Math.max(1, values.length - 1)) * plotWidth,
-    y: top + (1 - (value - min) / range) * plotHeight,
-    value,
-    label: points[index]?.label ?? "",
+  const rangeStart = dayTime(points[0]?.date ?? rows[0].point.date) ?? rows[0].time;
+  const rangeEnd = dayTime(points.at(-1)?.date ?? rows.at(-1)?.point.date ?? rows[0].point.date) ?? rows.at(-1)?.time ?? rows[0].time;
+  const timeRange = Math.max(DAY_MS, rangeEnd - rangeStart);
+  const chartPoints = rows.map((row) => ({
+    x: left + ((row.time - rangeStart) / timeRange) * plotWidth,
+    y: top + (1 - (row.value - min) / range) * plotHeight,
+    value: row.value,
+    label: row.point.label,
+    date: row.point.date,
   }));
   const path = chartPath(chartPoints);
-  const latest = values.at(-1) ?? 0;
-  const first = values[0] ?? 0;
+  const firstPoint = chartPoints[0];
+  const lastPoint = chartPoints.at(-1) ?? firstPoint;
+  const areaPath = `${path} L${lastPoint.x.toFixed(2)} ${height - bottom} L${firstPoint.x.toFixed(2)} ${height - bottom} Z`;
+  const latest = lastPoint.value;
+  const first = firstPoint.value;
+  const tickFractions = timeRange > DAY_MS * 8 ? [0, 0.25, 0.5, 0.75, 1] : [0, 0.5, 1];
+  const xLabels = uniqueTicks(tickFractions.map((fraction) => rangeStart + fraction * timeRange)).map((time) => ({
+    x: left + ((time - rangeStart) / timeRange) * plotWidth,
+    label: formatDayTick(time),
+  }));
+  const highlighted = chartPoints.filter((_, index) => index === 0 || index === Math.floor(chartPoints.length / 2) || index === chartPoints.length - 1);
 
   return (
     <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_220px]">
@@ -144,9 +182,10 @@ function HistoricalChart({ points, metric }: { points: HistoricalPerformancePoin
             const value = max - tick * range;
             return <g key={tick}><line x1={left} x2={width - right} y1={y} y2={y} stroke="var(--border)" /><text x={left - 10} y={y + 4} textAnchor="end" fontSize="12" fill="var(--text-muted)">{compactNumber(Math.round(value))}</text></g>;
           })}
-          <path d={`${path} L${chartPoints.at(-1)?.x ?? left} ${height - bottom} L${left} ${height - bottom} Z`} fill="url(#historicalArea)" />
+          {xLabels.map((label) => <g key={`${label.x}-${label.label}`}><line x1={label.x} x2={label.x} y1={height - bottom} y2={height - bottom + 6} stroke="var(--border-strong)" /><text x={label.x} y={height - 18} textAnchor="middle" fontSize="12" fill="var(--text-muted)">{label.label}</text></g>)}
+          <path d={areaPath} fill="url(#historicalArea)" />
           <path d={path} fill="none" stroke="var(--accent)" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" />
-          {chartPoints.filter((_, index) => index === 0 || index === Math.floor(chartPoints.length / 2) || index === chartPoints.length - 1).map((point) => <g key={`${point.label}-${point.x}`}><circle cx={point.x} cy={point.y} r="4" fill="var(--accent)" /><text x={point.x} y={height - 18} textAnchor="middle" fontSize="12" fill="var(--text-muted)">{point.label}</text></g>)}
+          {highlighted.map((point) => <circle key={`${point.date}-${point.value}`} cx={point.x} cy={point.y} r="4" fill="var(--accent)" />)}
         </svg>
       </div>
       <aside className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
