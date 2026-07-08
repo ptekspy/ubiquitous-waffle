@@ -27,6 +27,9 @@ type RawProfile = {
   awarder_karma?: number;
   over_18?: boolean;
   icon_img?: string;
+  subreddit?: {
+    subscribers?: number;
+  };
 };
 
 type RawPost = {
@@ -237,6 +240,7 @@ function toProfile(username: string, raw: RawProfile): RedditProfile {
     commentKarma: raw.comment_karma ?? 0,
     awardeeKarma: raw.awardee_karma ?? 0,
     awarderKarma: raw.awarder_karma ?? 0,
+    followerCount: typeof raw.subreddit?.subscribers === "number" ? raw.subreddit.subscribers : null,
     over18: raw.over_18 ?? false,
     iconUrl: raw.icon_img || null,
   };
