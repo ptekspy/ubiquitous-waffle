@@ -2,7 +2,7 @@ importScripts("background.js");
 
 const originalPaidPolitelyHandleMessage = handleMessage;
 
-handleMessage = async function paidPolitelyHandleMessageWithPostCrawler(message, sender) {
+handleMessage = async function paidPolitelyHandleMessageWithCrawlers(message, sender) {
   if (message?.type === "PAIDPOLITELY_DEEP_DIVE_REDDIT_POST") {
     const redditId = normaliseRedditPostId(message.redditId);
     if (!redditId) {
@@ -12,12 +12,21 @@ handleMessage = async function paidPolitelyHandleMessageWithPostCrawler(message,
     return deepDiveRedditPost(redditId);
   }
 
+  if (message?.type === "PAIDPOLITELY_CRAWL_REDDIT_TARGET") {
+    return crawlRedditTarget(message.target);
+  }
+
   return originalPaidPolitelyHandleMessage(message, sender);
 };
 
 function normaliseRedditPostId(value) {
   const id = String(value || "").trim().replace(/^t3_/, "").split(/[/?#]/)[0];
   return /^[A-Za-z0-9_]+$/.test(id) ? id : "";
+}
+
+function normaliseRedditName(value) {
+  const name = String(value || "").trim().replace(/^r\//i, "").replace(/^u\//i, "").replace(/^@/, "").split(/[/?#]/)[0];
+  return /^[A-Za-z0-9_-]{2,32}$/.test(name) ? name : "";
 }
 
 async function deepDiveRedditPost(redditId) {
@@ -60,6 +69,125 @@ async function deepDiveRedditPost(redditId) {
       insights,
       rawCommentCount: Array.isArray(result.data?.[1]?.data?.children) ? result.data[1].data.children.length : 0,
     },
+  };
+}
+
+async function crawlRedditTarget(rawTarget) {
+  const target = normaliseIdleTarget(rawTarget);
+  if (!target) return { ok: false, status: "bad_idle_target", error: "PaidPolitely needs a valid idle crawler target." };
+
+  if (target.kind === "USER_PROFILE") {
+    const result = await scanRedditProfile(target.username, { preferHeadless: true, openInBackground: true });
+    if (!result.ok) return result;
+
+    return {
+      ok: true,
+      status: "captured_idle_user_profile",
+      payload: {
+        ...result.payload,
+        source: "paidpolitely-reddit-extension-idle-user-profile-v1",
+        target,
+      },
+    };
+  }
+
+  return crawlRedditListingTarget(target);
+}
+
+function normaliseIdleTarget(rawTarget) {
+  if (!rawTarget || typeof rawTarget !== "object") return null;
+  const kind = String(rawTarget.kind || "");
+  const feed = String(rawTarget.feed || "best").trim().toLowerCase();
+  const label = String(rawTarget.label || feed).slice(0, 160);
+
+  if (kind === "SUBREDDIT_FEED") {
+    const subreddit = normaliseRedditName(rawTarget.subreddit);
+    if (!subreddit) return null;
+    return { id: String(rawTarget.id || ""), kind, label, subreddit, username: null, feed };
+  }
+
+  if (kind === "USER_PROFILE") {
+    const username = normaliseRedditName(rawTarget.username);
+    if (!username) return null;
+    return { id: String(rawTarget.id || ""), kind, label, subreddit: null, username, feed: "submitted+comments" };
+  }
+
+  if (kind === "HOME_FEED") {
+    return { id: String(rawTarget.id || ""), kind, label, subreddit: null, username: null, feed };
+  }
+
+  return null;
+}
+
+function idleListingUrl(target) {
+  const [feedName, timeRange] = String(target.feed || "best").split(":");
+  const safeFeed = /^(new|best|hot|rising|top)$/.test(feedName) ? feedName : "best";
+  const url = target.kind === "SUBREDDIT_FEED" ? new URL(`https://www.reddit.com/r/${encodeURIComponent(target.subreddit)}/${safeFeed}.json`) : new URL(`https://www.reddit.com/${safeFeed}.json`);
+
+  if (safeFeed === "top") url.searchParams.set("t", /^(hour|day|week|month|year|all)$/.test(timeRange || "") ? timeRange : "day");
+  return url.toString();
+}
+
+async function crawlRedditListingTarget(target) {
+  const result = await fetchRedditListing(idleListingUrl(target), 3);
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: "idle_listing_blocked",
+      error: result.error || `Reddit blocked ${target.label} idle crawl.`,
+    };
+  }
+
+  const posts = result.children.map(toIdleListingPost).filter(Boolean);
+
+  return {
+    ok: true,
+    status: "captured_idle_listing",
+    payload: {
+      source: "paidpolitely-reddit-extension-idle-listing-v1",
+      capturedAt: new Date().toISOString(),
+      target,
+      posts,
+      comments: [],
+      rawPostCount: result.children.length,
+      metadata: {
+        pages: result.pages,
+        truncated: Boolean(result.after),
+        feed: target.feed,
+        kind: target.kind,
+        label: target.label,
+      },
+    },
+  };
+}
+
+function toIdleListingPost(child) {
+  if (child?.kind !== "t3") return null;
+  const data = child.data || {};
+  const permalink = canonicalRedditUrl(data.permalink);
+  const subreddit = String(data.subreddit || "").replace(/^r\//i, "");
+  const title = String(data.title || "").trim();
+  const author = normaliseRedditName(data.author) || null;
+
+  if (!title || !subreddit || !permalink) return null;
+  if (isGameOrPromoRow({ title, subreddit, permalink, score: asNumber(data.score, 0), numComments: asNumber(data.num_comments, 0), id: String(data.name || data.id || "") })) return null;
+
+  return {
+    id: String(data.name || (data.id ? `t3_${data.id}` : permalink)),
+    title,
+    subreddit,
+    author,
+    permalink,
+    url: typeof data.url === "string" && data.url.length > 0 ? data.url : null,
+    createdUtc: asNumber(data.created_utc, Math.floor(Date.now() / 1000)),
+    score: asNumber(data.score, 0),
+    numComments: asNumber(data.num_comments, 0),
+    upvoteRatio: typeof data.upvote_ratio === "number" ? data.upvote_ratio : null,
+    linkFlairText: typeof data.link_flair_text === "string" ? data.link_flair_text : null,
+    over18: Boolean(data.over_18),
+    isSelf: Boolean(data.is_self),
+    domain: typeof data.domain === "string" ? data.domain : null,
+    postHint: typeof data.post_hint === "string" ? data.post_hint : null,
   };
 }
 
@@ -155,7 +283,6 @@ function scrapePostInsightsInPage() {
     }
   }
 
-  // Fallback: look for a small visual card where the label and value are split across sibling nodes.
   const allTextNodes = [...document.querySelectorAll("span, p, div, h1, h2, h3, h4")]
     .map((node) => compact(node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || ""))
     .filter(Boolean)
