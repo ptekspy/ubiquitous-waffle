@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 
 import { requireCurrentUser } from "@/lib/auth/session";
-import { getDareTracker, reviewDareCompletion, type DareTrackerResponse } from "@/lib/dares/tracker";
+import { getDareTracker, reviewDareCompletion, syncDareCompletionsForScan, type DareTrackerResponse } from "@/lib/dares/tracker";
+import { prisma } from "@/lib/db/prisma";
 
 export const dynamic = "force-dynamic";
 
@@ -29,10 +30,22 @@ function optionalString(value: unknown): string | null | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
+async function syncLatestScan(userId: string): Promise<void> {
+  const latest = await prisma.accountScan.findFirst({
+    where: { account: { ownerUserId: userId } },
+    orderBy: { fetchedAt: "desc" },
+    select: { id: true, accountId: true, account: { select: { ownerUserId: true } } },
+  });
+
+  if (!latest) return;
+  await syncDareCompletionsForScan(latest.id, latest.accountId, latest.account.ownerUserId);
+}
+
 export async function GET(): Promise<NextResponse<DareTrackerResponse | ErrorResponse>> {
   const user = await requireCurrentUser().catch(() => null);
   if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
 
+  await syncLatestScan(user.id).catch((error) => console.warn("Dares sync skipped", error));
   const tracker = await getDareTracker(user.id);
   return NextResponse.json(tracker);
 }
