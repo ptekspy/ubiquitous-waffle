@@ -19,6 +19,7 @@ const navigationGroups: NavigationGroup[] = [
       { label: "Dashboard", href: "/dashboard" },
       { label: "Account", href: "/dashboard/account" },
       { label: "Jobs", href: "/dashboard/jobs" },
+      { label: "Crawler", href: "/dashboard/crawler", badge: "new" },
       { label: "Settings", href: "/dashboard/settings" },
     ],
   },
@@ -43,6 +44,7 @@ function isActive(pathname: string, href: string): boolean {
 function pageTitle(pathname: string): { eyebrow: string; title: string } {
   if (pathname.startsWith("/dashboard/account")) return { eyebrow: "Account intelligence", title: "Account Analytics" };
   if (pathname.startsWith("/dashboard/jobs")) return { eyebrow: "Browser automation", title: "Scheduled Jobs" };
+  if (pathname.startsWith("/dashboard/crawler")) return { eyebrow: "Always-on crawling", title: "Crawler Data" };
   if (pathname.startsWith("/dashboard/trends")) return { eyebrow: "Growth signals", title: "Trends" };
   if (pathname.startsWith("/dashboard/product-ops")) return { eyebrow: "Operating system", title: "Product Ops" };
   if (pathname.startsWith("/dashboard/settings")) return { eyebrow: "Workspace setup", title: "Settings" };
