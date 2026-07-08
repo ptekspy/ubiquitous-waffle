@@ -6,6 +6,7 @@ import { numberFormat } from "@/utils/number-format";
 import { AccountMetricTrendCard } from "./account-metric-trend-card";
 import { AdvancedAnalyticsPanel } from "./advanced-analytics-panel";
 import { ContentTypeList } from "./content-type-list";
+import { DaresTrackerPanel } from "./dares-tracker-panel";
 import { DashboardHealthCard } from "./dashboard-health-card";
 import { PanelHeading } from "./panel-heading";
 import { PlannerCard } from "./planner-card";
@@ -27,6 +28,7 @@ export function Dashboard({ data }: DashboardProps) {
       <DashboardHealthCard analytics={data.analytics} />
       <AccountMetricTrendCard />
       <AdvancedAnalyticsPanel />
+      <DaresTrackerPanel />
       <PlannerCard initialJob={data.plannerJob} />
 
       <section className={`${cardClass} flex items-center justify-between gap-5 p-5 max-sm:flex-col max-sm:items-stretch`}>
