@@ -40,6 +40,8 @@ type SnapshotRow = {
   commentCount: number;
 };
 
+type ExistingSnapshotRow = { id: string };
+
 async function findAccountId(ownerUserId: string, username: string | null): Promise<string | null> {
   const account = await prisma.redditAccount.findFirst({
     where: {
@@ -65,6 +67,20 @@ function safeName(value: string | null | undefined): string | null {
   const clean = value?.trim();
   if (!clean) return null;
   return clean.slice(0, 240);
+}
+
+async function existingSnapshotId(ownerUserId: string, capturedAt: Date, sourceFileName: string | null): Promise<string | null> {
+  if (!sourceFileName) return null;
+  const rows = await prisma.$queryRaw<ExistingSnapshotRow[]>`
+    SELECT "id"
+    FROM "HistoricalSnapshot"
+    WHERE "ownerUserId" = ${ownerUserId}
+      AND "sourceFileName" = ${sourceFileName}
+      AND "capturedAt" = ${capturedAt}
+    LIMIT 1
+  `;
+
+  return rows[0]?.id ?? null;
 }
 
 async function insertPost(snapshotId: string, ownerUserId: string, accountId: string | null, observedAt: Date, post: ParsedHistoricalPost): Promise<void> {
@@ -117,19 +133,27 @@ export async function importHistoricalSnapshot(input: SnapshotImportInput): Prom
   }
 
   const accountId = await findAccountId(input.ownerUserId, parsed.username);
-  const snapshotId = randomUUID();
   const sourceFileName = safeName(input.sourceFileName);
+  const snapshotId = (await existingSnapshotId(input.ownerUserId, input.capturedAt, sourceFileName)) ?? randomUUID();
 
-  await prisma.$transaction(async (tx) => {
-    await tx.$executeRaw`
-      INSERT INTO "HistoricalSnapshot" (
-        "id", "ownerUserId", "accountId", "source", "sourceFileName", "capturedAt", "postCount", "commentCount", "metadata"
-      ) VALUES (
-        ${snapshotId}, ${input.ownerUserId}, ${accountId}, ${parsed.source}, ${sourceFileName}, ${input.capturedAt}, ${parsed.posts.length}, ${parsed.comments.length}, ${parsed.metadata}
-      )
-      ON CONFLICT DO NOTHING
-    `;
-  });
+  await prisma.$executeRaw`
+    INSERT INTO "HistoricalSnapshot" (
+      "id", "ownerUserId", "accountId", "source", "sourceFileName", "capturedAt", "postCount", "commentCount", "metadata"
+    ) VALUES (
+      ${snapshotId}, ${input.ownerUserId}, ${accountId}, ${parsed.source}, ${sourceFileName}, ${input.capturedAt}, ${parsed.posts.length}, ${parsed.comments.length}, ${parsed.metadata}
+    )
+    ON CONFLICT ("id") DO UPDATE SET
+      "accountId" = EXCLUDED."accountId",
+      "source" = EXCLUDED."source",
+      "sourceFileName" = EXCLUDED."sourceFileName",
+      "postCount" = EXCLUDED."postCount",
+      "commentCount" = EXCLUDED."commentCount",
+      "metadata" = EXCLUDED."metadata",
+      "importedAt" = CURRENT_TIMESTAMP
+  `;
+
+  await prisma.$executeRaw`DELETE FROM "HistoricalPostObservation" WHERE "snapshotId" = ${snapshotId}`;
+  await prisma.$executeRaw`DELETE FROM "HistoricalCommentObservation" WHERE "snapshotId" = ${snapshotId}`;
 
   for (const post of parsed.posts) {
     await insertPost(snapshotId, input.ownerUserId, accountId, input.capturedAt, post);
