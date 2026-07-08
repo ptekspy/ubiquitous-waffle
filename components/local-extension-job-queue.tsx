@@ -25,7 +25,7 @@ type ExtensionCrawlerResponse =
 
 type JobKey = "profile" | "deepDive";
 
-type JobStatus = "waiting" | "running" | "success" | "error" | "blocked";
+type JobStatus = "waiting" | "running" | "success" | "error";
 
 type JobView = {
   key: JobKey;
@@ -43,17 +43,17 @@ const TICK_MS = 1000;
 const DEEP_DIVE_BATCH_SIZE = 8;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
 
-function intervalFromEnv(key: string, fallback: number): number {
-  const parsed = Number.parseInt(process.env[key] || "", 10);
+function envInterval(raw: string | undefined, fallback: number): number {
+  const parsed = Number.parseInt(raw || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
 }
 
 function profileIntervalMs(): number {
-  return intervalFromEnv("NEXT_PUBLIC_PROFILE_SCAN_INTERVAL_MS", PROFILE_INTERVAL_MS);
+  return envInterval(process.env.NEXT_PUBLIC_PROFILE_SCAN_INTERVAL_MS, PROFILE_INTERVAL_MS);
 }
 
 function deepDiveIntervalMs(): number {
-  return intervalFromEnv("NEXT_PUBLIC_DEEP_DIVE_REFRESH_INTERVAL_MS", DEEP_DIVE_INTERVAL_MS);
+  return envInterval(process.env.NEXT_PUBLIC_DEEP_DIVE_REFRESH_INTERVAL_MS, DEEP_DIVE_INTERVAL_MS);
 }
 
 function storageKey(username: string, key: JobKey): string {
@@ -117,7 +117,7 @@ function initialJobs(username: string): JobView[] {
 function statusClass(status: JobStatus): string {
   if (status === "running") return "status-pill status-panel--wait";
   if (status === "success") return "status-pill status-panel--ok";
-  if (status === "error" || status === "blocked") return "status-pill status-panel--off";
+  if (status === "error") return "status-pill status-panel--off";
   return "status-pill";
 }
 
@@ -266,6 +266,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
     if (due.key === "profile") void runProfileJob();
     if (due.key === "deepDive") void runDeepDiveJob();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isReady, jobs, now, scanId]);
 
   const activeJob = jobs.find((job) => job.status === "running") ?? null;
