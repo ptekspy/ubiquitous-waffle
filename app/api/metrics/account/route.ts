@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 
+import { getDashboardInsights } from "@/lib/analytics/dashboard-insights";
 import { requireCurrentUser } from "@/lib/auth/session";
 import { prisma } from "@/lib/db/prisma";
 import type { AccountMetricHistory } from "@/lib/types";
@@ -37,25 +38,28 @@ export async function GET(request: NextRequest): Promise<NextResponse<AccountMet
   });
 
   if (!account) {
-    return NextResponse.json({ window: selectedWindow, points: [] });
+    return NextResponse.json({ window: selectedWindow, points: [], events: [] });
   }
 
-  const points = await prisma.accountMetricSnapshot.findMany({
-    where: {
-      accountId: account.id,
-      capturedAt: { gte: since },
-    },
-    orderBy: { capturedAt: "asc" },
-    select: {
-      capturedAt: true,
-      totalKarma: true,
-      linkKarma: true,
-      commentKarma: true,
-      awardeeKarma: true,
-      awarderKarma: true,
-      followerCount: true,
-    },
-  });
+  const [points, insights] = await Promise.all([
+    prisma.accountMetricSnapshot.findMany({
+      where: {
+        accountId: account.id,
+        capturedAt: { gte: since },
+      },
+      orderBy: { capturedAt: "asc" },
+      select: {
+        capturedAt: true,
+        totalKarma: true,
+        linkKarma: true,
+        commentKarma: true,
+        awardeeKarma: true,
+        awarderKarma: true,
+        followerCount: true,
+      },
+    }),
+    getDashboardInsights(user.id),
+  ]);
 
   return NextResponse.json({
     window: selectedWindow,
@@ -68,5 +72,6 @@ export async function GET(request: NextRequest): Promise<NextResponse<AccountMet
       awarderKarma: point.awarderKarma,
       followerCount: point.followerCount,
     })),
+    events: insights.events.filter((event) => new Date(event.capturedAt).getTime() >= since.getTime()),
   });
 }
