@@ -5,6 +5,7 @@ import { FormEvent, useState } from "react";
 
 import { authClient } from "@/lib/auth-client";
 import { cardClass, inputClass, mutedClass, primaryButtonClass } from "@/lib/ui/styles";
+import { ThemeToggle } from "./theme-toggle";
 
 type AuthGateProps = {
   children: ReactNode;
@@ -133,7 +134,7 @@ export function AuthGate({ children }: AuthGateProps) {
 
   if (session.isPending) {
     return (
-      <main className="min-h-screen bg-[#120b16] px-4 py-10 text-[#fff8fb]">
+      <main className="grid min-h-screen place-items-center bg-[var(--bg)] px-4 py-10 text-[var(--text)]">
         <section className={`${cardClass} mx-auto max-w-xl p-8`}>
           <p className={mutedClass}>Checking session…</p>
         </section>
@@ -144,23 +145,26 @@ export function AuthGate({ children }: AuthGateProps) {
   if (session.data?.user) return <>{children}</>;
 
   return (
-    <main className="min-h-screen bg-[#120b16] bg-[radial-gradient(circle_at_top_left,rgba(255,79,145,0.28),transparent_36rem),radial-gradient(circle_at_top_right,rgba(255,184,107,0.18),transparent_34rem)] px-4 py-10 text-[#fff8fb] sm:px-6 lg:px-8">
-      <section className={`${cardClass} mx-auto grid max-w-xl gap-5 p-8`}>
-        <div>
-          <span className="text-xs font-extrabold uppercase tracking-[0.16em] text-[#ffb86b]">PaidPolitely SaaS</span>
-          <h1 className="mt-2 mb-2 text-4xl font-black tracking-[-0.05em]">{mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Verify email"}</h1>
-          <p className={mutedClass}>Email/password auth is powered by Better Auth. Dev verification codes are printed to the server console.</p>
+    <main className="grid min-h-screen place-items-center bg-[var(--bg)] px-4 py-10 text-[var(--text)] sm:px-6 lg:px-8">
+      <section className={`${cardClass} mx-auto grid w-full max-w-xl gap-5 p-8`}>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <span className="ui-eyebrow">PaidPolitely Analytics</span>
+            <h1 className="mt-2 mb-2 text-4xl font-extrabold tracking-[-0.05em] text-[var(--text)]">{mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Verify email"}</h1>
+            <p className={mutedClass}>Email/password auth is powered by Better Auth. Dev verification codes are printed to the server console.</p>
+          </div>
+          <ThemeToggle />
         </div>
 
-        {error ? <div className="rounded-2xl border border-[#ff6b8a]/40 bg-[#ff6b8a]/10 p-3 text-[#ffd7df]">{error}</div> : null}
-        {message ? <div className="rounded-2xl border border-[#7affbc]/30 bg-[#7affbc]/10 p-3 text-[#d9ffe9]">{message}</div> : null}
+        {error ? <div className="rounded-[16px] border border-[var(--issue)] bg-[var(--issue-soft)] p-3 text-[var(--issue)]">{error}</div> : null}
+        {message ? <div className="rounded-[16px] border border-[var(--ok)] bg-[var(--ok-soft)] p-3 text-[var(--ok)]">{message}</div> : null}
 
         {mode === "signin" ? (
           <form className="grid gap-3" onSubmit={signIn}>
             <input className={inputClass} type="email" placeholder="Email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
             <input className={inputClass} type="password" placeholder="Password" autoComplete="current-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
             <button className={primaryButtonClass} disabled={pending} type="submit">Sign in</button>
-            <button className="text-sm font-extrabold text-[#ffe6f0] underline decoration-white/25 underline-offset-4" type="button" onClick={() => setMode("signup")}>Create an account</button>
+            <button className="text-sm font-extrabold text-[var(--accent-strong)] underline decoration-[var(--border-strong)] underline-offset-4" type="button" onClick={() => setMode("signup")}>Create an account</button>
           </form>
         ) : null}
 
@@ -170,7 +174,7 @@ export function AuthGate({ children }: AuthGateProps) {
             <input className={inputClass} type="email" placeholder="Email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
             <input className={inputClass} type="password" placeholder="Password, minimum 8 characters" autoComplete="new-password" value={password} onChange={(event) => setPassword(event.target.value)} required />
             <button className={primaryButtonClass} disabled={pending} type="submit">Create account</button>
-            <button className="text-sm font-extrabold text-[#ffe6f0] underline decoration-white/25 underline-offset-4" type="button" onClick={() => setMode("signin")}>Already have an account?</button>
+            <button className="text-sm font-extrabold text-[var(--accent-strong)] underline decoration-[var(--border-strong)] underline-offset-4" type="button" onClick={() => setMode("signin")}>Already have an account?</button>
           </form>
         ) : null}
 
@@ -179,8 +183,8 @@ export function AuthGate({ children }: AuthGateProps) {
             <input className={inputClass} type="email" placeholder="Email" autoComplete="email" value={email} onChange={(event) => setEmail(event.target.value)} required />
             <input className={inputClass} inputMode="numeric" placeholder="Verification code from server console" value={otp} onChange={(event) => setOtp(event.target.value)} required />
             <button className={primaryButtonClass} disabled={pending} type="submit">Verify and continue</button>
-            <button className="text-sm font-extrabold text-[#ffe6f0] underline decoration-white/25 underline-offset-4" type="button" onClick={resendCode} disabled={pending}>Print a new code</button>
-            <button className="text-sm font-extrabold text-[#ffe6f0] underline decoration-white/25 underline-offset-4" type="button" onClick={() => setMode("signin")}>Back to sign in</button>
+            <button className="text-sm font-extrabold text-[var(--accent-strong)] underline decoration-[var(--border-strong)] underline-offset-4" type="button" onClick={resendCode} disabled={pending}>Print a new code</button>
+            <button className="text-sm font-extrabold text-[var(--accent-strong)] underline decoration-[var(--border-strong)] underline-offset-4" type="button" onClick={() => setMode("signin")}>Back to sign in</button>
           </form>
         ) : null}
       </section>
