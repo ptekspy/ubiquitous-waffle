@@ -23,6 +23,10 @@ function windowKey(request: NextRequest): WindowKey {
   return value === "hour" || value === "week" || value === "all" ? value : "day";
 }
 
+function positiveFollowerCount(value: number | null): number | null {
+  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : null;
+}
+
 export async function GET(request: NextRequest): Promise<NextResponse<AccountMetricHistory | ErrorResponse>> {
   const user = await requireCurrentUser().catch(() => null);
   if (!user) return NextResponse.json<ErrorResponse>({ error: "Sign in first." }, { status: 401 });
@@ -69,7 +73,7 @@ export async function GET(request: NextRequest): Promise<NextResponse<AccountMet
       commentKarma: point.commentKarma,
       awardeeKarma: point.awardeeKarma,
       awarderKarma: point.awarderKarma,
-      followerCount: point.followerCount,
+      followerCount: positiveFollowerCount(point.followerCount),
     })),
     events: since ? insights.events.filter((event) => new Date(event.capturedAt).getTime() >= since.getTime()) : insights.events,
   });
