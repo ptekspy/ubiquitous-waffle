@@ -72,6 +72,10 @@ function warningCount(value: Prisma.JsonValue | null): number {
   return Array.isArray(value) ? value.length : 0;
 }
 
+function titleTokens(value: string): string[] {
+  return value.toLowerCase().replace(/[^a-z0-9\s]/g, " ").split(/\s+/).filter((token) => token.length >= 4).slice(0, 8);
+}
+
 async function ensureSettings(ownerUserId: string): Promise<ProductOpsSettings> {
   const rows = await prisma.$queryRaw<SettingsRow[]>`SELECT * FROM "WorkspaceSetting" WHERE "ownerUserId" = ${ownerUserId} LIMIT 1`;
   if (rows[0]) return rows[0];
@@ -206,12 +210,56 @@ function onboarding(args: { hasAccount: boolean; hasScan: boolean; hasMetric: bo
 }
 
 function weeklyReport(args: { account: { username: string } | null; changes: ProductOpsResponse["changes"]; scans: ProductOpsResponse["scans"]; plannedPosts: ProductOpsResponse["plannedPosts"] }): ProductOpsResponse["weeklyReport"] {
-  const bullets = [
-    args.changes[0]?.detail ?? "No metric changes captured yet.",
-    args.scans[0] ? `Latest scan captured ${args.scans[0].posts} posts and ${args.scans[0].comments} comments.` : "No scan history yet.",
-    args.plannedPosts.length > 0 ? `${args.plannedPosts.length} planned/action posts are being tracked.` : "No planned posts yet; create one from the action tracker.",
-  ];
+  const bullets = [args.changes[0]?.detail ?? "No metric changes captured yet.", args.scans[0] ? `Latest scan captured ${args.scans[0].posts} posts and ${args.scans[0].comments} comments.` : "No scan history yet.", args.plannedPosts.length > 0 ? `${args.plannedPosts.length} planned/action posts are being tracked.` : "No planned posts yet; create one from the action tracker."];
   return { title: args.account ? `Weekly report for u/${args.account.username}` : "Weekly report", bullets, generatedAt: new Date().toISOString() };
+}
+
+export async function syncPlannedPostsForScan(scanId: string, accountId: string, ownerUserId?: string | null): Promise<number> {
+  if (!ownerUserId) return 0;
+
+  const posts = await prisma.postSnapshot.findMany({ where: { scanId, accountId }, select: { id: true, title: true, subreddit: true, createdUtc: true, score: true, refreshedScore: true } });
+  const plans = await prisma.$queryRaw<Array<{ id: string; title: string; subreddit: string; plannedFor: Date | null }>>`
+    SELECT "id", "title", "subreddit", "plannedFor"
+    FROM "PlannedPost"
+    WHERE "ownerUserId" = ${ownerUserId}
+      AND ("accountId" IS NULL OR "accountId" = ${accountId})
+      AND "linkedPostSnapshotId" IS NULL
+      AND "status" IN ('PLANNED', 'POSTED')
+    ORDER BY COALESCE("plannedFor", "createdAt") DESC
+    LIMIT 50
+  `;
+
+  let linked = 0;
+
+  for (const plan of plans) {
+    const tokens = titleTokens(plan.title);
+    const plannedAt = plan.plannedFor?.getTime() ?? null;
+    const candidates = posts
+      .filter((post) => post.subreddit.toLowerCase() === plan.subreddit.toLowerCase())
+      .map((post) => {
+        const createdAt = post.createdUtc * 1000;
+        const timeScore = plannedAt === null ? 1 : Math.max(0, 48 - Math.abs(createdAt - plannedAt) / 3_600_000);
+        const titleScore = tokens.filter((token) => post.title.toLowerCase().includes(token)).length * 10;
+        return { post, score: timeScore + titleScore };
+      })
+      .filter((candidate) => candidate.score >= 1)
+      .sort((a, b) => b.score - a.score);
+
+    const match = candidates[0]?.post;
+    if (!match) continue;
+
+    await prisma.$executeRaw`
+      UPDATE "PlannedPost"
+      SET "linkedPostSnapshotId" = ${match.id},
+          "actualScore" = ${match.refreshedScore ?? match.score},
+          "status" = 'POSTED',
+          "updatedAt" = CURRENT_TIMESTAMP
+      WHERE "id" = ${plan.id} AND "ownerUserId" = ${ownerUserId}
+    `;
+    linked += 1;
+  }
+
+  return linked;
 }
 
 export async function getProductOps(ownerUserId: string): Promise<ProductOpsResponse> {
@@ -234,16 +282,7 @@ export async function handleProductOpsAction(ownerUserId: string, action: Produc
     const values = action.values;
     await prisma.$executeRaw`
       UPDATE "WorkspaceSetting"
-      SET "activeAccountId" = ${values.activeAccountId ?? settings.activeAccountId},
-          "timezone" = ${cleanText(values.timezone, settings.timezone)},
-          "profileScanInterval" = ${asInt(values.profileScanInterval, settings.profileScanInterval)},
-          "deepDiveInterval" = ${asInt(values.deepDiveInterval, settings.deepDiveInterval)},
-          "deepDiveBatchSize" = ${asInt(values.deepDiveBatchSize, settings.deepDiveBatchSize)},
-          "plannerEnabled" = ${typeof values.plannerEnabled === "boolean" ? values.plannerEnabled : settings.plannerEnabled},
-          "plannerModel" = ${values.plannerModel === undefined ? settings.plannerModel : cleanText(values.plannerModel, "") || null},
-          "weeklyReportEnabled" = ${typeof values.weeklyReportEnabled === "boolean" ? values.weeklyReportEnabled : settings.weeklyReportEnabled},
-          "trackedSubredditText" = ${cleanText(values.trackedSubredditText, settings.trackedSubredditText)},
-          "updatedAt" = CURRENT_TIMESTAMP
+      SET "activeAccountId" = ${values.activeAccountId ?? settings.activeAccountId}, "timezone" = ${cleanText(values.timezone, settings.timezone)}, "profileScanInterval" = ${asInt(values.profileScanInterval, settings.profileScanInterval)}, "deepDiveInterval" = ${asInt(values.deepDiveInterval, settings.deepDiveInterval)}, "deepDiveBatchSize" = ${asInt(values.deepDiveBatchSize, settings.deepDiveBatchSize)}, "plannerEnabled" = ${typeof values.plannerEnabled === "boolean" ? values.plannerEnabled : settings.plannerEnabled}, "plannerModel" = ${values.plannerModel === undefined ? settings.plannerModel : cleanText(values.plannerModel, "") || null}, "weeklyReportEnabled" = ${typeof values.weeklyReportEnabled === "boolean" ? values.weeklyReportEnabled : settings.weeklyReportEnabled}, "trackedSubredditText" = ${cleanText(values.trackedSubredditText, settings.trackedSubredditText)}, "updatedAt" = CURRENT_TIMESTAMP
       WHERE "ownerUserId" = ${ownerUserId}
     `;
   }
@@ -259,53 +298,30 @@ export async function handleProductOpsAction(ownerUserId: string, action: Produc
   if (action.action === "planned:update") {
     await prisma.$executeRaw`
       UPDATE "PlannedPost"
-      SET "status" = COALESCE(${action.status ?? null}, "status"),
-          "actualScore" = COALESCE(${action.actualScore ?? null}, "actualScore"),
-          "actualFollowerGain" = COALESCE(${action.actualFollowerGain ?? null}, "actualFollowerGain"),
-          "notes" = COALESCE(${action.notes ?? null}, "notes"),
-          "updatedAt" = CURRENT_TIMESTAMP
+      SET "status" = COALESCE(${action.status ?? null}, "status"), "actualScore" = COALESCE(${action.actualScore ?? null}, "actualScore"), "actualFollowerGain" = COALESCE(${action.actualFollowerGain ?? null}, "actualFollowerGain"), "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP
       WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}
     `;
   }
 
   if (action.action === "subreddit:add") {
-    await prisma.$executeRaw`
-      INSERT INTO "TrackedSubreddit" ("id", "ownerUserId", "subreddit", "notes")
-      VALUES (${randomUUID()}, ${ownerUserId}, ${cleanName(action.subreddit)}, ${action.notes ?? null})
-      ON CONFLICT ("ownerUserId", "subreddit") DO UPDATE SET "enabled" = true, "notes" = EXCLUDED."notes", "updatedAt" = CURRENT_TIMESTAMP
-    `;
+    await prisma.$executeRaw`INSERT INTO "TrackedSubreddit" ("id", "ownerUserId", "subreddit", "notes") VALUES (${randomUUID()}, ${ownerUserId}, ${cleanName(action.subreddit)}, ${action.notes ?? null}) ON CONFLICT ("ownerUserId", "subreddit") DO UPDATE SET "enabled" = true, "notes" = EXCLUDED."notes", "updatedAt" = CURRENT_TIMESTAMP`;
   }
 
   if (action.action === "subreddit:update") {
-    await prisma.$executeRaw`
-      UPDATE "TrackedSubreddit"
-      SET "enabled" = COALESCE(${action.enabled ?? null}, "enabled"), "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}
-    `;
+    await prisma.$executeRaw`UPDATE "TrackedSubreddit" SET "enabled" = COALESCE(${action.enabled ?? null}, "enabled"), "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}`;
   }
 
   if (action.action === "peer:add") {
-    await prisma.$executeRaw`
-      INSERT INTO "TrackedPeerAccount" ("id", "ownerUserId", "username", "label", "notes")
-      VALUES (${randomUUID()}, ${ownerUserId}, ${cleanName(action.username)}, ${action.label ?? null}, ${action.notes ?? null})
-      ON CONFLICT ("ownerUserId", "username") DO UPDATE SET "enabled" = true, "label" = EXCLUDED."label", "notes" = EXCLUDED."notes", "updatedAt" = CURRENT_TIMESTAMP
-    `;
+    await prisma.$executeRaw`INSERT INTO "TrackedPeerAccount" ("id", "ownerUserId", "username", "label", "notes") VALUES (${randomUUID()}, ${ownerUserId}, ${cleanName(action.username)}, ${action.label ?? null}, ${action.notes ?? null}) ON CONFLICT ("ownerUserId", "username") DO UPDATE SET "enabled" = true, "label" = EXCLUDED."label", "notes" = EXCLUDED."notes", "updatedAt" = CURRENT_TIMESTAMP`;
   }
 
   if (action.action === "peer:update") {
-    await prisma.$executeRaw`
-      UPDATE "TrackedPeerAccount"
-      SET "enabled" = COALESCE(${action.enabled ?? null}, "enabled"), "latestScore" = COALESCE(${action.latestScore ?? null}, "latestScore"), "latestFollowers" = COALESCE(${action.latestFollowers ?? null}, "latestFollowers"), "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP
-      WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}
-    `;
+    await prisma.$executeRaw`UPDATE "TrackedPeerAccount" SET "enabled" = COALESCE(${action.enabled ?? null}, "enabled"), "latestScore" = COALESCE(${action.latestScore ?? null}, "latestScore"), "latestFollowers" = COALESCE(${action.latestFollowers ?? null}, "latestFollowers"), "notes" = COALESCE(${action.notes ?? null}, "notes"), "updatedAt" = CURRENT_TIMESTAMP WHERE "id" = ${action.id} AND "ownerUserId" = ${ownerUserId}`;
   }
 
   if (action.action === "report:generate") {
     const ops = await getProductOps(ownerUserId);
-    await prisma.$executeRaw`
-      INSERT INTO "WeeklyReport" ("id", "ownerUserId", "accountId", "weekStart", "weekEnd", "title", "summary")
-      VALUES (${randomUUID()}, ${ownerUserId}, ${ops.activeAccount?.id ?? null}, ${new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)}, ${new Date()}, ${ops.weeklyReport.title}, ${JSON.stringify(ops.weeklyReport)}::jsonb)
-    `;
+    await prisma.$executeRaw`INSERT INTO "WeeklyReport" ("id", "ownerUserId", "accountId", "weekStart", "weekEnd", "title", "summary") VALUES (${randomUUID()}, ${ownerUserId}, ${ops.activeAccount?.id ?? null}, ${new Date(Date.now() - 7 * 24 * 60 * 60 * 1000)}, ${new Date()}, ${ops.weeklyReport.title}, ${JSON.stringify(ops.weeklyReport)}::jsonb)`;
   }
 
   return getProductOps(ownerUserId);
