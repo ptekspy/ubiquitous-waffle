@@ -7,8 +7,10 @@ import "./globals.css";
 
 const title = "PaidPolitely Analytics";
 const description = "Reddit creator analytics, subreddit performance tracking, and AI-assisted post planning.";
+const appUrl = process.env.NEXT_PUBLIC_APP_URL || process.env.BETTER_AUTH_URL || "http://localhost:3000";
 
 export const metadata: Metadata = {
+  metadataBase: new URL(appUrl),
   applicationName: title,
   title: {
     default: title,
@@ -47,7 +49,7 @@ export const viewport: Viewport = {
 
 export default function RootLayout({ children }: Readonly<{ children: ReactNode }>) {
   return (
-    <html lang="en" data-theme="light" suppressHydrationWarning>
+    <html lang="en" data-theme="light" data-scroll-behavior="smooth" suppressHydrationWarning>
       <body>
         <ThemeProvider>
           <QueryProvider>{children}</QueryProvider>
