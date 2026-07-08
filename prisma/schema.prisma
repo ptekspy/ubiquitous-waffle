@@ -34,6 +34,7 @@ model User {
   authAccounts     Account[]
   redditAccounts   RedditAccount[]
   postDeepDiveJobs PostDeepDiveJob[]
+  dareCompletions  DareCompletion[]
 
   @@map("user")
 }
@@ -128,6 +129,7 @@ model RedditAccount {
   scans           AccountScan[]
   metricSnapshots AccountMetricSnapshot[]
   plannerJobs     PlannerJob[]
+  dareCompletions DareCompletion[]
 
   @@unique([ownerUserId, username])
   @@index([ownerUserId])
@@ -163,6 +165,7 @@ model AccountScan {
   mediaGroups          MediaGroup[]
   metricSnapshots      AccountMetricSnapshot[]
   plannerJobs          PlannerJob[]
+  dareCompletions      DareCompletion[]
 
   @@index([accountId, fetchedAt])
   @@index([source])
