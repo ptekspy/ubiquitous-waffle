@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "PaidPolitely Capture",
-  "version": "0.2.6",
+  "version": "0.2.7",
   "description": "PaidPolitely Capture extension.",
   "permissions": ["tabs", "scripting"],
   "host_permissions": ["https://www.reddit.com/*", "https://reddit.com/*"],
