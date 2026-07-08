@@ -3,8 +3,6 @@ const DEFAULT_TICK_MS = 60_000;
 const DEFAULT_ERROR_TICK_MS = 30_000;
 
 let shouldStop = false;
-let lastProfileTick = 0;
-let lastDeepDiveTick = 0;
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -22,16 +20,6 @@ function tickMs() {
 function errorTickMs() {
   const parsed = Number.parseInt(process.env.SCHEDULER_WORKER_ERROR_TICK_MS || "", 10);
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_ERROR_TICK_MS;
-}
-
-function profileIntervalMs() {
-  const parsed = Number.parseInt(process.env.PROFILE_SCAN_INTERVAL_MS || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15 * 60 * 1000;
-}
-
-function deepDiveIntervalMs() {
-  const parsed = Number.parseInt(process.env.DEEP_DIVE_REFRESH_INTERVAL_MS || "", 10);
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : 2 * 60 * 60 * 1000;
 }
 
 function headers() {
@@ -66,10 +54,7 @@ async function postJson(path) {
   return payload;
 }
 
-async function maybeRunProfileScan(now) {
-  if (now - lastProfileTick < profileIntervalMs()) return;
-  lastProfileTick = now;
-
+async function runProfileScanTick() {
   const result = await postJson("/api/scheduler/profile/process");
   if (result?.processed) {
     log(`Profile scan saved for u/${result.username}`, { scanId: result.scanId, profilePoints: result.profilePoints });
@@ -78,10 +63,7 @@ async function maybeRunProfileScan(now) {
   }
 }
 
-async function maybeRunDeepDive(now) {
-  if (now - lastDeepDiveTick < deepDiveIntervalMs()) return;
-  lastDeepDiveTick = now;
-
+async function runDeepDiveTick() {
   const result = await postJson("/api/scheduler/deep-dive/process");
   if (result?.processed) {
     log(`Deep-dive refresh ${result.mode || "processed"}`, { jobId: result.jobId, status: result.status, comments: result.comments, error: result.error });
@@ -92,14 +74,11 @@ async function maybeRunDeepDive(now) {
 
 async function run() {
   log(`Scheduler worker started against ${target()}`);
-  lastProfileTick = Date.now() - profileIntervalMs();
-  lastDeepDiveTick = Date.now() - deepDiveIntervalMs();
 
   while (!shouldStop) {
     try {
-      const now = Date.now();
-      await maybeRunProfileScan(now);
-      await maybeRunDeepDive(now);
+      await runProfileScanTick();
+      await runDeepDiveTick();
       await sleep(tickMs());
     } catch (error) {
       const message = error instanceof Error ? error.message : "Scheduler worker loop failed.";
