@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 180 180" role="img" aria-label="PaidPolitely Apple touch icon">
+  <rect width="180" height="180" rx="42" fill="#0F172A"/>
+  <path d="M53 130V44h45c21 0 35 12 35 31s-14 31-35 31H76v24H53Zm23-45h21c8 0 13-4 13-10s-5-10-13-10H76v20Z" fill="#E83E8C"/>
+  <path d="M41 110c29 24 73 27 104 3" fill="none" stroke="#FCE7F3" stroke-width="10" stroke-linecap="round" opacity=".9"/>
+  <circle cx="139" cy="107" r="10" fill="#FCE7F3"/>
+</svg>
