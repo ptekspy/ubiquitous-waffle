@@ -22,9 +22,21 @@ export type ParsedHistoricalComment = {
   raw?: Record<string, unknown>;
 };
 
+export type ParsedProfileMetrics = {
+  username: string | null;
+  totalKarma: number | null;
+  linkKarma: number | null;
+  commentKarma: number | null;
+  awardeeKarma: number | null;
+  awarderKarma: number | null;
+  followerCount: number | null;
+  raw?: Record<string, unknown>;
+};
+
 export type ParsedHistoricalSnapshot = {
   source: string;
   username: string | null;
+  profileMetrics: ParsedProfileMetrics;
   posts: ParsedHistoricalPost[];
   comments: ParsedHistoricalComment[];
   metadata: Record<string, unknown>;
@@ -86,11 +98,32 @@ function parseAttributes(raw: string): Record<string, string> {
   return attrs;
 }
 
-function intValue(value: unknown, fallback = 0): number {
+function compactNumberValue(value: unknown, fallback = 0): number {
   if (typeof value === "number" && Number.isFinite(value)) return Math.round(value);
   if (typeof value !== "string") return fallback;
-  const parsed = Number.parseInt(value.replace(/,/g, ""), 10);
-  return Number.isFinite(parsed) ? parsed : fallback;
+
+  const clean = value.trim().replace(/,/g, "");
+  const match = clean.match(/^(-?\d+(?:\.\d+)?)([kKmMbB])?$/);
+  if (!match) {
+    const parsed = Number.parseInt(clean, 10);
+    return Number.isFinite(parsed) ? parsed : fallback;
+  }
+
+  const base = Number.parseFloat(match[1]);
+  if (!Number.isFinite(base)) return fallback;
+  const suffix = match[2]?.toLowerCase();
+  const multiplier = suffix === "k" ? 1_000 : suffix === "m" ? 1_000_000 : suffix === "b" ? 1_000_000_000 : 1;
+  return Math.round(base * multiplier);
+}
+
+function intValue(value: unknown, fallback = 0): number {
+  return compactNumberValue(value, fallback);
+}
+
+function nullableInt(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = compactNumberValue(value, Number.NaN);
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function floatValue(value: unknown): number | null {
@@ -127,10 +160,106 @@ function subredditFromPermalink(permalink: string): string {
   return userMatch ? `u_${userMatch[1]}` : "unknown";
 }
 
+function titleUsername(raw: string): string | null {
+  return raw.match(/<title>\s*([^<(]+)\s*\(u\/([^)]+)\)/i)?.[2] ?? null;
+}
+
 function titleFromNearbyHtml(raw: string, redditId: string): string | null {
   const titlePattern = new RegExp(`<a[^>]+id=["']post-title-${redditId}["'][^>]*>([\\s\\S]*?)<\\/a>`, "i");
   const match = raw.match(titlePattern);
   return match ? stripTags(match[1]) : null;
+}
+
+function segmentAround(raw: string, pattern: RegExp, before = 900, after = 3000): string | null {
+  const match = raw.match(pattern);
+  if (!match || match.index === undefined) return null;
+  return raw.slice(Math.max(0, match.index - before), Math.min(raw.length, match.index + after));
+}
+
+function numberBeforeLabel(text: string, label: string): number | null {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`([0-9][0-9,.]*(?:\\.[0-9]+)?\\s*[kKmMbB]?)\\s+${escapedLabel}\\b`, "i");
+  const match = text.match(pattern);
+  return match ? nullableInt(match[1].replace(/\s+/g, "")) : null;
+}
+
+function numberAfterLabel(text: string, label: string): number | null {
+  const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const pattern = new RegExp(`${escapedLabel}\\b\\s*[:\\-]?\\s*([0-9][0-9,.]*(?:\\.[0-9]+)?\\s*[kKmMbB]?)`, "i");
+  const match = text.match(pattern);
+  return match ? nullableInt(match[1].replace(/\s+/g, "")) : null;
+}
+
+function metricFromText(text: string, label: string): number | null {
+  return numberBeforeLabel(text, label) ?? numberAfterLabel(text, label);
+}
+
+function parseFollowers(raw: string): number | null {
+  const widget = segmentAround(raw, /profile-followers-widget|followers-widget|Followers/i, 400, 1800);
+  if (!widget) return null;
+  const text = stripTags(widget);
+  return metricFromText(text, "followers") ?? metricFromText(text, "follower");
+}
+
+function parseKarmaMetrics(raw: string): Pick<ParsedProfileMetrics, "totalKarma" | "linkKarma" | "commentKarma" | "awardeeKarma" | "awarderKarma"> {
+  const scoped = segmentAround(raw, /profile-karma-widget|karma-widget|Post Karma|Comment Karma|Total Karma|Karma/i, 800, 5000);
+  const text = stripTags(scoped ?? raw);
+  const linkKarma = metricFromText(text, "Post Karma") ?? metricFromText(text, "Link Karma");
+  const commentKarma = metricFromText(text, "Comment Karma");
+  const awardeeKarma = metricFromText(text, "Awardee Karma");
+  const awarderKarma = metricFromText(text, "Awarder Karma");
+  const explicitTotal = metricFromText(text, "Total Karma");
+
+  const genericKarmaMatches = [...text.matchAll(/([0-9][0-9,.]*(?:\.[0-9]+)?\s*[kKmMbB]?)\s+Karma\b/gi)]
+    .map((match) => nullableInt(match[1].replace(/\s+/g, "")))
+    .filter((value): value is number => value !== null);
+  const totalKarma = explicitTotal ?? genericKarmaMatches.find((value) => value !== linkKarma && value !== commentKarma) ?? (linkKarma !== null || commentKarma !== null ? (linkKarma ?? 0) + (commentKarma ?? 0) + (awardeeKarma ?? 0) + (awarderKarma ?? 0) : null);
+
+  return {
+    totalKarma,
+    linkKarma,
+    commentKarma,
+    awardeeKarma,
+    awarderKarma,
+  };
+}
+
+function parseHtmlProfileMetrics(raw: string): ParsedProfileMetrics {
+  const username = titleUsername(raw);
+  const karma = parseKarmaMetrics(raw);
+  const followerCount = parseFollowers(raw);
+
+  return {
+    username,
+    ...karma,
+    followerCount,
+    raw: {
+      parser: "reddit-html-profile",
+      hasFollowerWidget: /profile-followers-widget|followers-widget/i.test(raw),
+      hasKarmaText: /Post Karma|Comment Karma|Total Karma|Karma/i.test(raw),
+    },
+  };
+}
+
+function parseJsonProfileMetrics(payload: Record<string, unknown>): ParsedProfileMetrics {
+  const profile = payload.profile && typeof payload.profile === "object" ? payload.profile as Record<string, unknown> : {};
+  const username = stringValue(payload.username) || stringValue(profile.username);
+  const linkKarma = nullableInt(profile.linkKarma ?? profile.postKarma);
+  const commentKarma = nullableInt(profile.commentKarma);
+  const awardeeKarma = nullableInt(profile.awardeeKarma);
+  const awarderKarma = nullableInt(profile.awarderKarma);
+  const totalKarma = nullableInt(profile.totalKarma) ?? (linkKarma !== null || commentKarma !== null ? (linkKarma ?? 0) + (commentKarma ?? 0) + (awardeeKarma ?? 0) + (awarderKarma ?? 0) : null);
+
+  return {
+    username: username || null,
+    totalKarma,
+    linkKarma,
+    commentKarma,
+    awardeeKarma,
+    awarderKarma,
+    followerCount: nullableInt(profile.followerCount ?? profile.followers),
+    raw: { parser: "paidpolitely-json-profile" },
+  };
 }
 
 function parseHtmlPosts(raw: string): ParsedHistoricalPost[] {
@@ -187,8 +316,8 @@ function parseHtmlComments(raw: string): ParsedHistoricalComment[] {
     const createdUtc = timeMatches.length > 0 ? createdUtcFromTimestamp(timeMatches.at(-1)?.[1] ?? "") : 0;
     const bodyMatches = [...before.matchAll(/<div[^>]+id="-post-rtjson-content"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi)];
     const body = bodyMatches.length > 0 ? stripTags(bodyMatches.at(-1)?.[1] ?? "") : "Comment body unavailable in HTML snapshot";
-    const viewMatches = [...raw.slice(match.index, match.index + 1800).matchAll(/([\d,]+)\s+views?/gi)];
-    const viewCount = viewMatches.length > 0 ? intValue(viewMatches[0][1]) : null;
+    const viewMatches = [...raw.slice(match.index, match.index + 1800).matchAll(/([\d,.]+\s*[kKmMbB]?)\s+views?/gi)];
+    const viewCount = viewMatches.length > 0 ? intValue(viewMatches[0][1].replace(/\s+/g, "")) : null;
     const subreddit = subredditFromPermalink(permalink);
 
     if (!permalink || createdUtc <= 0) continue;
@@ -238,6 +367,7 @@ function parseJsonPayload(value: unknown): ParsedHistoricalSnapshot | null {
   const payload = value as Record<string, unknown>;
   const postsInput = Array.isArray(payload.posts) ? payload.posts : [];
   const commentsInput = Array.isArray(payload.comments) ? payload.comments : [];
+  const profileMetrics = parseJsonProfileMetrics(payload);
 
   const posts = postsInput.map((post): ParsedHistoricalPost | null => {
     const row = post as RawJsonPost;
@@ -285,7 +415,8 @@ function parseJsonPayload(value: unknown): ParsedHistoricalSnapshot | null {
 
   return {
     source: stringValue(payload.source) || "paidpolitely-json-snapshot",
-    username: stringValue(payload.username) || stringValue((payload.profile as Record<string, unknown> | undefined)?.username),
+    username: profileMetrics.username,
+    profileMetrics,
     posts,
     comments,
     metadata: {
@@ -293,6 +424,7 @@ function parseJsonPayload(value: unknown): ParsedHistoricalSnapshot | null {
       capturedAt: payload.capturedAt ?? null,
       rawPostCount: postsInput.length,
       rawCommentCount: commentsInput.length,
+      profileMetrics,
     },
   };
 }
@@ -303,10 +435,12 @@ export function parseHistoricalSnapshotContent(raw: string): ParsedHistoricalSna
 
   const posts = parseHtmlPosts(raw);
   const comments = parseHtmlComments(raw);
+  const profileMetrics = parseHtmlProfileMetrics(raw);
 
   return {
     source: "reddit-profile-html",
-    username: raw.match(/<title>\s*([^<(]+)\s*\(u\/([^)]+)\)/i)?.[2] ?? null,
+    username: profileMetrics.username,
+    profileMetrics,
     posts,
     comments,
     metadata: {
@@ -314,6 +448,7 @@ export function parseHistoricalSnapshotContent(raw: string): ParsedHistoricalSna
       rawLength: raw.length,
       postElementCount: posts.length,
       commentElementCount: comments.length,
+      profileMetrics,
     },
   };
 }
