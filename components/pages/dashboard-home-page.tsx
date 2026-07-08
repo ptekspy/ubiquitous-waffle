@@ -27,6 +27,19 @@ type ProductOpsSummaryResponse = {
   health: Array<{ key: string; label: string; status: HealthStatus; detail: string }>;
 };
 
+type NextAction = {
+  key: string;
+  priority: "high" | "medium" | "low";
+  title: string;
+  detail: string;
+  href: string;
+};
+
+type NextActionsResponse = {
+  generatedAt: string;
+  actions: NextAction[];
+};
+
 type CardAction =
   | { label: string; href: string; kind?: "primary" | "secondary" }
   | { label: string; onClick: () => void | Promise<void>; disabled?: boolean; kind?: "primary" | "secondary" };
@@ -49,6 +62,12 @@ function dateTime(value: string | null | undefined): string {
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return value;
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" }).format(date);
+}
+
+function priorityTone(priority: NextAction["priority"]): "ok" | "warn" | "off" {
+  if (priority === "high") return "off";
+  if (priority === "medium") return "warn";
+  return "ok";
 }
 
 function DashboardCard({ eyebrow, title, description, status, children, actions }: { eyebrow: string; title: string; description?: string; status?: { label: string; tone: "ok" | "warn" | "off" | string }; children?: ReactNode; actions?: CardAction[] }) {
@@ -84,6 +103,12 @@ async function fetchOps(): Promise<ProductOpsSummaryResponse> {
   return (await response.json()) as ProductOpsSummaryResponse;
 }
 
+async function fetchNextActions(): Promise<NextActionsResponse> {
+  const response = await fetch(`/api/product/next-actions?ts=${Date.now()}`, { cache: "no-store" });
+  if (!response.ok) throw new Error("Unable to load next actions.");
+  return (await response.json()) as NextActionsResponse;
+}
+
 function useProductOpsSummary() {
   const [state, setState] = useState<OpsState>("idle");
   const [ops, setOps] = useState<ProductOpsSummaryResponse | null>(null);
@@ -107,6 +132,31 @@ function useProductOpsSummary() {
   }, []);
 
   return { state, ops, error, load };
+}
+
+function useNextActions() {
+  const [state, setState] = useState<OpsState>("idle");
+  const [data, setData] = useState<NextActionsResponse | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function load() {
+    setState("loading");
+    setError(null);
+    try {
+      const result = await fetchNextActions();
+      setData(result);
+      setState("loaded");
+    } catch (loadError) {
+      setState("error");
+      setError(loadError instanceof Error ? loadError.message : "Unable to load next actions.");
+    }
+  }
+
+  useEffect(() => {
+    void load();
+  }, []);
+
+  return { state, data, error, load };
 }
 
 function WorkspaceCard() {
@@ -232,6 +282,34 @@ function AccountTrendDashboardCard() {
   );
 }
 
+function NextActionsCard() {
+  const { state, data, error, load } = useNextActions();
+  const actions = data?.actions ?? [];
+
+  return (
+    <DashboardCard
+      eyebrow="Next actions"
+      title="What to do next"
+      description={state === "loading" ? "Loading recommended actions…" : actions.length > 0 ? "Prioritised from scans, jobs, plans, tracked subreddits and peers." : "No urgent actions found."}
+      status={{ label: actions.length > 0 ? `${actions.length} actions` : state === "loaded" ? "clear" : state, tone: actions.some((item) => item.priority === "high") ? "off" : actions.length > 0 ? "warn" : "ok" }}
+      actions={[{ label: "Refresh", onClick: load }, { label: "Open product ops", href: "/dashboard/product-ops" }]}
+    >
+      {error ? <p className="text-[var(--issue)]">{error}</p> : null}
+      {actions.slice(0, 5).map((item) => (
+        <div className="rounded-[16px] border border-[var(--border)] bg-[var(--surface-muted)] p-3" key={item.key}>
+          <div className="mb-2 flex items-start justify-between gap-3">
+            <strong className="text-[var(--text)]">{item.title}</strong>
+            <span className={statusClass(priorityTone(item.priority))}>{item.priority}</span>
+          </div>
+          <small className="block text-[var(--text-muted)]">{item.detail}</small>
+          <div className="mt-3"><Link className={buttonClass} href={item.href}>Open</Link></div>
+        </div>
+      ))}
+      {data?.generatedAt ? <small className="text-[var(--text-muted)]">Last checked {dateTime(data.generatedAt)}</small> : null}
+    </DashboardCard>
+  );
+}
+
 function onboardingAction(key: string, runtime: ReturnType<typeof useDashboardRuntime>): CardAction | null {
   const username = normaliseRedditUsername(runtime.username);
   const canScan = isValidRedditUsername(username) && runtime.extensionState === "installed";
@@ -245,7 +323,7 @@ function onboardingAction(key: string, runtime: ReturnType<typeof useDashboardRu
 
 function healthAction(key: string, runtime: ReturnType<typeof useDashboardRuntime>): CardAction | null {
   if (key === "extension") return { label: "Check extension", onClick: runtime.checkExtension };
-  if (key === "scan" || key === "followers") return runtime.extensionState === "installed" ? { label: "Run scan", onClick: runtime.scanWithExtension, disabled: runtime.loading, kind: "primary" } : { label: "Open settings", href: "/dashboard/settings" };
+  if (key === "scan" || key === "followers" || key === "scanQuality") return runtime.extensionState === "installed" ? { label: "Run scan", onClick: runtime.scanWithExtension, disabled: runtime.loading, kind: "primary" } : { label: "Open settings", href: "/dashboard/settings" };
   if (key === "deepDive") return { label: "Open jobs", href: "/dashboard/jobs" };
   if (key === "planner") return { label: "Open product ops", href: "/dashboard/product-ops" };
   if (key === "database") return { label: "Refresh", onClick: runtime.refreshWorkspace };
@@ -287,7 +365,7 @@ function ProductOpsSummaryCards() {
       <DashboardCard
         eyebrow="Workspace health"
         title="Things needing attention"
-        description="Health checks include database, scans, followers, deep dives, planner jobs and extension status."
+        description="Health checks include database, scans, scan quality, followers, deep dives, planner jobs and extension status."
         status={{ label: healthRows.every((item) => item.status === "ok") ? "healthy" : "action needed", tone: healthRows.every((item) => item.status === "ok") ? "ok" : "warn" }}
         actions={[{ label: "Refresh", onClick: load }, { label: "Open settings", href: "/dashboard/settings" }]}
       >
@@ -327,6 +405,7 @@ export function DashboardHomePage() {
         {!savedUsername ? <RedditUsernameCard /> : null}
         <ScheduledJobsCard />
         <AccountTrendDashboardCard />
+        <NextActionsCard />
         <ProductOpsSummaryCards />
       </div>
     </>
