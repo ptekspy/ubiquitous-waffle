@@ -337,7 +337,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   if (!normalisedUsername) return null;
 
   return (
-    <section className={`${cardClass} mb-4 p-5`}>
+    <section className={`${cardClass} mb-4 p-5`} id="local-queue">
       <div className="mb-4 flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
         <div>
           <span className="ui-eyebrow">Local extension queue</span>
