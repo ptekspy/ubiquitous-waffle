@@ -21,20 +21,25 @@ enum PostDeepDiveJobStatus {
 }
 
 model User {
-  id             String    @id
+  id             String   @id
   name           String
-  email          String    @unique
-  emailVerified  Boolean   @default(false)
+  email          String   @unique
+  emailVerified  Boolean  @default(false)
   image          String?
   redditUsername String?
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  sessions         Session[]
-  authAccounts     Account[]
-  redditAccounts   RedditAccount[]
-  postDeepDiveJobs PostDeepDiveJob[]
-  dareCompletions  DareCompletion[]
+  sessions            Session[]
+  authAccounts        Account[]
+  redditAccounts      RedditAccount[]
+  postDeepDiveJobs    PostDeepDiveJob[]
+  dareCompletions     DareCompletion[]
+  workspaceSetting    WorkspaceSetting?
+  plannedPosts        PlannedPost[]
+  trackedSubreddits   TrackedSubreddit[]
+  trackedPeerAccounts TrackedPeerAccount[]
+  weeklyReports       WeeklyReport[]
 
   @@map("user")
 }
@@ -186,7 +191,7 @@ model AccountMetricSnapshot {
   createdAt     DateTime @default(now())
 
   account RedditAccount @relation(fields: [accountId], references: [id], onDelete: Cascade)
-  scan    AccountScan?   @relation(fields: [scanId], references: [id], onDelete: SetNull)
+  scan    AccountScan?  @relation(fields: [scanId], references: [id], onDelete: SetNull)
 
   @@index([accountId, capturedAt])
   @@index([scanId])
@@ -337,6 +342,104 @@ model DareCompletion {
   @@index([dareSlug])
   @@index([completionType])
   @@index([status])
+}
+
+model WorkspaceSetting {
+  id                     String   @id
+  ownerUserId            String   @unique
+  activeAccountId        String?
+  timezone               String   @default("Europe/London")
+  profileScanInterval    Int      @default(900000)
+  deepDiveInterval       Int      @default(7200000)
+  deepDiveBatchSize      Int      @default(50)
+  plannerEnabled         Boolean  @default(true)
+  plannerModel           String?
+  weeklyReportEnabled    Boolean  @default(true)
+  trackedSubredditText   String   @default("daresgonewild")
+  createdAt              DateTime @default(now())
+  updatedAt              DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([activeAccountId])
+}
+
+model PlannedPost {
+  id                   String   @id
+  ownerUserId          String
+  accountId            String?
+  subreddit            String
+  title                String
+  format               String   @default("unknown")
+  plannedFor           DateTime?
+  status               String   @default("PLANNED")
+  expectedScore        Int?
+  expectedFollowerGain Int?
+  actualScore          Int?
+  actualFollowerGain   Int?
+  linkedPostSnapshotId String?
+  rationale            String?
+  notes                String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId, status, plannedFor])
+  @@index([accountId, plannedFor])
+  @@index([linkedPostSnapshotId])
+  @@index([subreddit])
+}
+
+model TrackedSubreddit {
+  id          String   @id
+  ownerUserId String
+  subreddit   String
+  enabled     Boolean  @default(true)
+  notes       String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerUserId, subreddit])
+  @@index([ownerUserId, enabled])
+  @@index([subreddit])
+}
+
+model TrackedPeerAccount {
+  id              String   @id
+  ownerUserId     String
+  username        String
+  label           String?
+  enabled         Boolean  @default(true)
+  latestScore     Int?
+  latestFollowers Int?
+  notes           String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@unique([ownerUserId, username])
+  @@index([ownerUserId, enabled])
+  @@index([username])
+}
+
+model WeeklyReport {
+  id          String   @id
+  ownerUserId String
+  accountId   String?
+  weekStart   DateTime
+  weekEnd     DateTime
+  title       String
+  summary     Json
+  createdAt   DateTime @default(now())
+
+  owner User @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+
+  @@index([ownerUserId, weekStart])
+  @@index([accountId, weekStart])
 }
 
 model PostMetricSnapshot {
