@@ -22,6 +22,7 @@ const navigationGroups: NavigationGroup[] = [
     items: [
       { label: "Changes", href: "#intelligence" },
       { label: "Trends", href: "#trends" },
+      { label: "Post Insights", href: "#post-insights", badge: "new" },
       { label: "Subreddits", href: "#subreddits" },
       { label: "Posts", href: "#posts" },
       { label: "Comments", href: "#comments" },
