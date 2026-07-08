@@ -18,6 +18,10 @@
 # production
 /build
 
+# local historical HTML imports
+/data/historical-snapshots/*
+!/data/historical-snapshots/.gitkeep
+
 # misc
 .DS_Store
 *.pem
