@@ -153,9 +153,16 @@ export function AccountMetricTrendCard() {
   const [backfilledHistory, setBackfilledHistory] = useState<HistoricalPerformanceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
   const metric = metrics.find((item) => item.key === metricKey) ?? metrics[0];
   const isBackfilled = metric.mode === "backfilled";
+
+  useEffect(() => {
+    const handler = () => setRefreshKey((value) => value + 1);
+    window.addEventListener("paidpolitely-account-metrics-refresh", handler);
+    return () => window.removeEventListener("paidpolitely-account-metrics-refresh", handler);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -182,7 +189,7 @@ export function AccountMetricTrendCard() {
     }
     void load();
     return () => { cancelled = true; };
-  }, [windowKey]);
+  }, [windowKey, refreshKey]);
 
   const points = history?.points ?? [];
   const events = isBackfilled ? [] : history?.events ?? [];
