@@ -2,6 +2,7 @@ import type { Prisma } from "@prisma/client";
 
 import { getMediaKey, getPostType } from "@/lib/content/post-classification";
 import { syncDareCompletionsForScan } from "@/lib/dares/tracker";
+import { syncPlannedPostsForScan } from "@/lib/product/ops";
 import type { AccountAnalytics, RedditAccountData, RedditPost, SubredditMetric } from "@/lib/types";
 import { prisma } from "./prisma";
 
@@ -280,6 +281,7 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
   });
 
   await syncDareCompletionsForScan(scan.id, account.id, ownerId ?? null);
+  await syncPlannedPostsForScan(scan.id, account.id, ownerId ?? null);
 
   if (options.enqueueDeepDiveJobs ?? true) {
     await enqueuePostDeepDiveJobs(scan.id, ownerId);
