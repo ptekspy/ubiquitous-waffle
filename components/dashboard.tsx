@@ -10,6 +10,7 @@ import { DaresTrackerPanel } from "./dares-tracker-panel";
 import { DashboardHealthCard } from "./dashboard-health-card";
 import { PanelHeading } from "./panel-heading";
 import { PlannerCard } from "./planner-card";
+import { PostInsightsPanel } from "./post-insights-panel";
 import { StatCard } from "./stat-card";
 import { SubredditTable } from "./subreddit-table";
 import { Timeline } from "./timeline";
@@ -29,6 +30,7 @@ export function Dashboard({ data }: DashboardProps) {
       <section id="trends" className="analytics-section">
         <AccountMetricTrendCard />
       </section>
+      <PostInsightsPanel />
       <section id="intelligence" className="analytics-section">
         <AdvancedAnalyticsPanel />
       </section>
