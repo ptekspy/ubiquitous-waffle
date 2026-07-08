@@ -4,18 +4,18 @@ export const primaryButtonClass = "button-primary";
 export const inputClass = "input-field";
 export const mutedClass = "text-muted";
 
-export function bridgeStateClass(): string {
+export function bridgeStateClass(_state?: unknown): string {
   return "status-panel";
 }
 
-export function bridgeDotClass(): string {
+export function bridgeDotClass(_state?: unknown): string {
   return "status-dot";
 }
 
-export function stepClass(): string {
+export function stepClass(_state?: unknown): string {
   return "journey-step";
 }
 
-export function stepBadgeClass(): string {
+export function stepBadgeClass(_state?: unknown): string {
   return "step-badge";
 }
