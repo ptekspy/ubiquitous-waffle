@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { AppShell } from "@/components/app-shell";
 import { AuthGate } from "@/components/auth-gate";
 import { BrowserPostCrawler } from "@/components/browser-post-crawler";
+import { BrowserProfileScheduler } from "@/components/browser-profile-scheduler";
 import { Dashboard } from "@/components/dashboard";
 import { EmptyState } from "@/components/empty-state";
 import { ErrorCard } from "@/components/error-card";
@@ -188,11 +189,18 @@ function AuthenticatedDashboard() {
     }
   }
 
+  function acceptBrowserScheduledScan(scan: AnalyzeResponse) {
+    setData(scan);
+    setUsername(scan.profile.username);
+    setState("loaded");
+  }
+
   const loading = state === "loading" || workspaceState === "loading";
 
   return (
     <AppShell>
       <BrowserPostCrawler scanId={data?.scanId ?? null} extensionState={extensionState} onRefresh={loadWorkspace} onStatus={setExtensionMessage} />
+      <BrowserProfileScheduler username={username} extensionState={extensionState} onImported={acceptBrowserScheduledScan} onStatus={setExtensionMessage} />
       <UserMenu />
       <WorkspaceHeader data={data} />
 
