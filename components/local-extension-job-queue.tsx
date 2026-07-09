@@ -61,6 +61,8 @@ const MAX_DEEP_DIVE_RUN_ALL = 500;
 const MAX_IDLE_CRAWL_RUN_ALL = 25;
 const TICK_MS = 1000;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
+const MIN_ERROR_RETRY_MS = 60 * 1000;
+const MAX_ERROR_RETRY_MS = 5 * 60 * 1000;
 
 function envInterval(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw || "", 10);
@@ -170,6 +172,10 @@ function statusClass(status: JobStatus): string {
   return "status-pill";
 }
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error || "Unknown error.");
+}
+
 export function LocalExtensionJobQueue({ username, extensionState, scanId, onImported, onRefresh, onStatus }: LocalExtensionJobQueueProps) {
   const normalisedUsername = normaliseRedditUsername(username);
   const isReady = extensionState === "installed" && isValidRedditUsername(normalisedUsername);
@@ -197,8 +203,31 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     async function loadSettings() {
       const nextSettings = await fetchQueueSettings();
       if (cancelled) return;
+
       setSettings(nextSettings);
-      if (normalisedUsername) setJobs(initialJobs(normalisedUsername, nextSettings));
+      if (!normalisedUsername) return;
+
+      setJobs((current) => {
+        const fresh = initialJobs(normalisedUsername, nextSettings);
+        if (current.length === 0) return fresh;
+
+        return fresh.map((freshJob) => {
+          const existing = current.find((job) => job.key === freshJob.key);
+          if (!existing) return freshJob;
+
+          const storedLastRun = readLastRun(normalisedUsername, freshJob.key);
+          const lastRunAt = existing.lastRunAt ?? storedLastRun;
+          const recalculatedNext = lastRunAt ? lastRunAt + freshJob.cadenceMs : existing.nextRunAt;
+          const shouldKeepRetry = existing.status === "error" && existing.nextRunAt > Date.now();
+
+          return {
+            ...existing,
+            cadenceMs: freshJob.cadenceMs,
+            lastRunAt,
+            nextRunAt: existing.status === "running" || shouldKeepRetry ? existing.nextRunAt : recalculatedNext,
+          };
+        });
+      });
     }
 
     void loadSettings();
@@ -220,6 +249,12 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     return settingsRef.current.idleCrawlInterval;
   }
 
+  function retryDelayFor(key: JobKey): number {
+    const cadence = cadenceFor(key);
+    if (key === "idleCrawl") return Math.min(Math.max(cadence, 30 * 1000), MIN_ERROR_RETRY_MS);
+    return Math.min(Math.max(Math.floor(cadence / 5), MIN_ERROR_RETRY_MS), MAX_ERROR_RETRY_MS);
+  }
+
   function markDone(key: JobKey, detail: string, startedAt: number) {
     const usernameValue = usernameRef.current;
     const cadence = cadenceFor(key);
@@ -232,6 +267,21 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       nextRunAt: completedAt + cadence,
       lastDurationMs: completedAt - startedAt,
     });
+  }
+
+  function markFailed(key: JobKey, detail: string, startedAt: number, retryDelayMs = retryDelayFor(key)) {
+    const usernameValue = usernameRef.current;
+    const failedAt = Date.now();
+    const retryAt = failedAt + retryDelayMs;
+    writeLastRun(usernameValue, key, failedAt);
+    updateJob(key, {
+      status: "error",
+      detail: `${detail} Retrying in ${duration(retryDelayMs)}.`,
+      lastRunAt: failedAt,
+      nextRunAt: retryAt,
+      lastDurationMs: failedAt - startedAt,
+    });
+    statusRef.current(`${detail} Retrying in ${duration(retryDelayMs)}.`);
   }
 
   async function runProfileJob() {
@@ -252,8 +302,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       });
 
       if (!response.ok) {
-        updateJob("profile", { status: "error", detail: response.error, lastDurationMs: Date.now() - startedAt });
-        statusRef.current(response.error);
+        markFailed("profile", response.error, startedAt);
         return;
       }
 
@@ -263,14 +312,15 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       });
 
       if (!imported.ok) {
-        updateJob("profile", { status: "error", detail: imported.error, lastDurationMs: Date.now() - startedAt });
-        statusRef.current(imported.error);
+        markFailed("profile", imported.error, startedAt);
         return;
       }
 
       importedRef.current(imported.data);
       markDone("profile", `Saved profile metric point for u/${imported.data.profile.username}.`, startedAt);
       statusRef.current(`Saved scheduled profile metric point for u/${imported.data.profile.username}.`);
+    } catch (error) {
+      markFailed("profile", errorMessage(error), startedAt);
     } finally {
       runningRef.current = null;
     }
@@ -295,8 +345,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       for (let index = 0; index < limit; index += 1) {
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok) {
-          updateJob("deepDive", { status: "error", detail: claim.error, lastDurationMs: Date.now() - startedAt });
-          statusRef.current(claim.error);
+          markFailed("deepDive", claim.error, startedAt);
           return;
         }
 
@@ -314,15 +363,13 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         } as never);
 
         if (!response.ok) {
-          updateJob("deepDive", { status: "error", detail: response.error, lastDurationMs: Date.now() - startedAt });
-          statusRef.current(response.error);
+          markFailed("deepDive", response.error, startedAt);
           return;
         }
 
         const imported = await importBrowserCrawlerPayload(claim.job.id, response.payload);
         if (!imported.ok) {
-          updateJob("deepDive", { status: "error", detail: imported.error, lastDurationMs: Date.now() - startedAt });
-          statusRef.current(imported.error);
+          markFailed("deepDive", imported.error, startedAt);
           return;
         }
 
@@ -334,6 +381,8 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       const detail = completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.${suffix}` : "No post deep dives were due; idle crawler can use the browser next.";
       markDone("deepDive", detail, startedAt);
       statusRef.current(detail);
+    } catch (error) {
+      markFailed("deepDive", errorMessage(error), startedAt);
     } finally {
       runningRef.current = null;
     }
@@ -355,8 +404,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       for (let index = 0; index < limit; index += 1) {
         const claim = await claimIdleCrawlerTarget();
         if (!claim.ok) {
-          updateJob("idleCrawl", { status: "error", detail: claim.error, lastDurationMs: Date.now() - startedAt });
-          statusRef.current(claim.error);
+          markFailed("idleCrawl", claim.error, startedAt);
           return;
         }
 
@@ -372,15 +420,14 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
         if (!response.ok) {
           await reportIdleCrawlerFailure(claim.target.id, response.error);
-          updateJob("idleCrawl", { status: "error", detail: response.error, lastDurationMs: Date.now() - startedAt });
-          statusRef.current(response.error);
+          markFailed("idleCrawl", response.error, startedAt);
           return;
         }
 
         const imported = await importIdleCrawlerPayload(claim.target.id, response.payload);
         if (!imported.ok) {
-          updateJob("idleCrawl", { status: "error", detail: imported.error, lastDurationMs: Date.now() - startedAt });
-          statusRef.current(imported.error);
+          await reportIdleCrawlerFailure(claim.target.id, imported.error);
+          markFailed("idleCrawl", imported.error, startedAt);
           return;
         }
 
@@ -394,6 +441,8 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       markDone("idleCrawl", detail, startedAt);
       statusRef.current(detail);
       window.dispatchEvent(new Event("paidpolitely-idle-crawler-refresh"));
+    } catch (error) {
+      markFailed("idleCrawl", errorMessage(error), startedAt);
     } finally {
       runningRef.current = null;
     }
