@@ -62,6 +62,7 @@ const MAX_IDLE_CRAWL_RUN_ALL = 25;
 const TICK_MS = 1000;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
 const AUTOMATION_STORAGE_SUFFIX = "automation-enabled";
+const IDLE_CRAWLER_STORAGE_SUFFIX = "idle-crawler-enabled";
 const MIN_ERROR_RETRY_MS = 60 * 1000;
 const MAX_ERROR_RETRY_MS = 5 * 60 * 1000;
 
@@ -103,6 +104,10 @@ function automationStorageKey(username: string): string {
   return `${STORAGE_PREFIX}:${username.toLowerCase()}:${AUTOMATION_STORAGE_SUFFIX}`;
 }
 
+function idleCrawlerStorageKey(username: string): string {
+  return `${STORAGE_PREFIX}:${username.toLowerCase()}:${IDLE_CRAWLER_STORAGE_SUFFIX}`;
+}
+
 function readAutomationEnabled(username: string): boolean {
   if (typeof window === "undefined") return true;
   return window.localStorage.getItem(automationStorageKey(username)) !== "false";
@@ -111,6 +116,16 @@ function readAutomationEnabled(username: string): boolean {
 function writeAutomationEnabled(username: string, enabled: boolean): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(automationStorageKey(username), enabled ? "true" : "false");
+}
+
+function readIdleCrawlerEnabled(username: string): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(idleCrawlerStorageKey(username)) !== "false";
+}
+
+function writeIdleCrawlerEnabled(username: string, enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(idleCrawlerStorageKey(username), enabled ? "true" : "false");
 }
 
 function readLastRun(username: string, key: JobKey): number | null {
@@ -234,6 +249,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   const [settings, setSettings] = useState<QueueSettings>(() => defaultSettings());
   const [jobs, setJobs] = useState<JobView[]>([]);
   const [automationEnabled, setAutomationEnabled] = useState(true);
+  const [idleCrawlerEnabled, setIdleCrawlerEnabled] = useState(true);
   const runningRef = useRef<JobKey | null>(null);
   const stopRequestedRef = useRef(false);
   const usernameRef = useRef(normalisedUsername);
@@ -253,6 +269,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   useEffect(() => {
     if (!normalisedUsername) return;
     setAutomationEnabled(readAutomationEnabled(normalisedUsername));
+    setIdleCrawlerEnabled(readIdleCrawlerEnabled(normalisedUsername));
     stopRequestedRef.current = false;
   }, [normalisedUsername]);
 
@@ -645,6 +662,30 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     });
   }
 
+  function toggleIdleCrawler() {
+    if (!normalisedUsername) return;
+    setIdleCrawlerEnabled((current) => {
+      const next = !current;
+      writeIdleCrawlerEnabled(normalisedUsername, next);
+
+      if (!next) {
+        if (runningRef.current === "idleCrawl") {
+          stopRequestedRef.current = true;
+          const detail = "Idle crawler turned off. The current idle target will finish safely, then idle crawling will stop.";
+          updateJob("idleCrawl", { detail });
+          statusRef.current(detail);
+        } else {
+          statusRef.current("Idle crawler turned off. Profile scans and deep dives will continue to run automatically.");
+        }
+      } else {
+        statusRef.current("Idle crawler turned on. It will run automatically when profile scans and deep dives are not due.");
+        kickScheduler();
+      }
+
+      return next;
+    });
+  }
+
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
     return () => window.clearInterval(timer);
@@ -652,17 +693,17 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
   useEffect(() => {
     if (!isReady || !automationEnabled || runningRef.current) return;
-    const due = jobs.find((job) => job.nextRunAt <= now && (job.key !== "deepDive" || Boolean(scanId)));
+    const due = jobs.find((job) => job.nextRunAt <= now && (job.key !== "deepDive" || Boolean(scanId)) && (job.key !== "idleCrawl" || idleCrawlerEnabled));
     if (!due) return;
 
     if (due.key === "profile") void runProfileJob();
     if (due.key === "deepDive") void runDeepDiveJob(false);
     if (due.key === "idleCrawl") void runIdleCrawlJob(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [automationEnabled, isReady, jobs, now, scanId]);
+  }, [automationEnabled, idleCrawlerEnabled, isReady, jobs, now, scanId]);
 
   const activeJob = jobs.find((job) => job.status === "running") ?? null;
-  const nextJob = useMemo(() => [...jobs].filter((job) => job.key !== "deepDive" || Boolean(scanId)).sort((a, b) => a.nextRunAt - b.nextRunAt)[0] ?? null, [jobs, scanId]);
+  const nextJob = useMemo(() => [...jobs].filter((job) => (job.key !== "deepDive" || Boolean(scanId)) && (job.key !== "idleCrawl" || idleCrawlerEnabled)).sort((a, b) => a.nextRunAt - b.nextRunAt)[0] ?? null, [idleCrawlerEnabled, jobs, scanId]);
 
   if (!normalisedUsername) return null;
 
@@ -677,8 +718,12 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         <div className="flex flex-wrap items-center gap-2">
           <span className={isReady ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{isReady ? "Extension ready" : "Extension needed"}</span>
           <span className={automationEnabled ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{automationEnabled ? "Automation on" : "Automation off"}</span>
+          <span className={idleCrawlerEnabled ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{idleCrawlerEnabled ? "Idle on" : "Idle off"}</span>
           <button className={buttonClass()} type="button" disabled={!isReady} onClick={toggleAutomation}>
-            {automationEnabled ? "Pause automation" : "Resume automation"}
+            {automationEnabled ? "Pause all automation" : "Resume all automation"}
+          </button>
+          <button className={buttonClass()} type="button" disabled={!isReady} onClick={toggleIdleCrawler}>
+            {idleCrawlerEnabled ? "Turn idle off" : "Turn idle on"}
           </button>
           {activeJob ? (
             <button className={buttonClass("text-[var(--danger)]")} type="button" onClick={stopCurrentJob}>
@@ -699,10 +744,20 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
             <p className="m-0 font-extrabold text-[var(--text)]">Automation paused</p>
             <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">Scheduled jobs will not start automatically. Manual Run now, Run all due, and Run sweep buttons are still available.</p>
           </div>
+        ) : !idleCrawlerEnabled && nextJob ? (
+          <div className="grid gap-2">
+            <p className="m-0 font-extrabold text-[var(--text)]">Idle crawler paused · next priority job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p>
+            <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">Idle crawling is off, but profile scans and deep dives will continue automatically.</p>
+          </div>
         ) : nextJob ? (
           <div className="grid gap-2">
             <p className="m-0 font-extrabold text-[var(--text)]">Next job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p>
             <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">{nextJob.detail}</p>
+          </div>
+        ) : !idleCrawlerEnabled ? (
+          <div className="grid gap-2">
+            <p className="m-0 font-extrabold text-[var(--text)]">Idle crawler paused</p>
+            <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">Idle crawling is off. Profile scans and deep dives will still run when they are due.</p>
           </div>
         ) : (
           <p className="m-0 font-extrabold text-[var(--text)]">No local jobs scheduled.</p>
@@ -719,14 +774,15 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
                   Every {duration(job.cadenceMs)}
                   {job.key === "deepDive" ? ` · scheduled batch ${settings.deepDiveBatchSize}` : ""}
                   {job.key === "idleCrawl" ? ` · batch ${settings.idleCrawlBatchSize}` : ""}
+                  {job.key === "idleCrawl" && !idleCrawlerEnabled ? " · scheduled idle off" : ""}
                 </small>
               </div>
-              <span className={statusClass(job.status)}>{job.status}</span>
+              <span className={job.key === "idleCrawl" && !idleCrawlerEnabled && job.status !== "running" ? "status-pill status-panel--off" : statusClass(job.status)}>{job.key === "idleCrawl" && !idleCrawlerEnabled && job.status !== "running" ? "off" : job.status}</span>
             </div>
-            <p className="mb-3 text-sm leading-relaxed text-[var(--text-muted)]">{job.detail}</p>
+            <p className="mb-3 text-sm leading-relaxed text-[var(--text-muted)]">{job.key === "idleCrawl" && !idleCrawlerEnabled && job.status !== "running" ? "Scheduled idle crawling is off. Profile scans and deep dives still run automatically; manual idle runs are still available." : job.detail}</p>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-bold text-[var(--text)]">
-                <span>Next: {job.status === "running" ? "running now" : automationEnabled ? duration(job.nextRunAt - now) : "paused"}</span>
+                <span>Next: {job.status === "running" ? "running now" : automationEnabled ? job.key === "idleCrawl" && !idleCrawlerEnabled ? "idle off" : duration(job.nextRunAt - now) : "paused"}</span>
                 <span className="ml-3 text-[var(--text-muted)]">Last duration: {duration(job.lastDurationMs)}</span>
               </div>
               <div className="flex flex-wrap gap-2">
