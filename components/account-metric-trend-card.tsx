@@ -5,6 +5,7 @@ import { useEffect, useMemo, useState, type PointerEvent } from "react";
 import type { AccountMetricEvent, AccountMetricHistory, AccountMetricPoint, HistoricalPerformanceResponse } from "@/lib/types";
 import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
+import { numberFormat } from "@/utils/number-format";
 
 type WindowKey = AccountMetricHistory["window"];
 type LoadState = "idle" | "loading" | "loaded" | "error";
@@ -111,7 +112,7 @@ function areaPath(points: ChartPoint[]): string {
 }
 
 function formatTick(value: number): string {
-  return Math.abs(value) >= 1_000 ? compactNumber(value) : new Intl.NumberFormat("en-GB", { maximumFractionDigits: 0 }).format(value);
+  return Math.abs(value) >= 1_000 ? compactNumber(value) : numberFormat(value);
 }
 
 function formatDelta(value: number): string {
@@ -302,7 +303,7 @@ export function AccountMetricTrendCard() {
               {chartData.points.map((point, index) => <circle key={`${point.capturedAt}-${point.value}`} cx={point.x} cy={point.y} r={activeIndex === index ? 6 : 4} fill="var(--surface)" stroke="var(--accent)" strokeWidth={activeIndex === index ? 4 : 3} />)}
               {activePoint ? <g><line x1={activePoint.x} x2={activePoint.x} y1={plot.top} y2={plot.bottom} stroke="var(--accent)" strokeWidth="1.5" strokeDasharray="5 5" /><circle cx={activePoint.x} cy={activePoint.y} r="8" fill="var(--accent)" opacity="0.18" /></g> : null}
             </svg>
-            {activePoint ? <div className="pointer-events-none absolute z-10 min-w-[190px] rounded-[16px] border border-[var(--border-strong)] bg-[var(--surface)] p-3 text-sm shadow-[var(--shadow-soft)]" style={{ left: `${Math.min(78, Math.max(8, (activePoint.x / chart.width) * 100))}%`, top: `${Math.min(68, Math.max(10, (activePoint.y / chart.height) * 100))}%` }}><span className="block text-xs font-extrabold tracking-widest text-[var(--text-muted)] uppercase">{formatPointTime(activePoint.capturedAt, windowKey, isBackfilled)}</span><strong className="mt-1 block text-xl text-[var(--text)]">{compactNumber(activePoint.value)}</strong><span className="mt-1 block text-[var(--text-muted)]">{metric.label}</span></div> : null}
+            {activePoint ? <div className="pointer-events-none absolute z-10 min-w-[190px] rounded-[16px] border border-[var(--border-strong)] bg-[var(--surface)] p-3 text-sm shadow-[var(--shadow-soft)]" style={{ left: `${Math.min(78, Math.max(8, (activePoint.x / chart.width) * 100))}%`, top: `${Math.min(68, Math.max(10, (activePoint.y / chart.height) * 100))}%` }}><span className="block text-xs font-extrabold tracking-widest text-[var(--text-muted)] uppercase">{formatPointTime(activePoint.capturedAt, windowKey, isBackfilled)}</span><strong className="mt-1 block text-xl text-[var(--text)]">{numberFormat(activePoint.value)}</strong><span className="mt-1 block text-[var(--text-muted)]">{metric.label}</span></div> : null}
           </div>
           <div className="grid gap-3 content-start">
             <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4"><span className="block text-sm text-[var(--text-muted)]">Total karma</span><strong className="mt-1 block text-3xl font-extrabold text-[var(--text)]">{compactNumber(current?.totalKarma ?? 0)}</strong><small className={karmaDelta >= 0 ? "text-[var(--ok)]" : "text-[var(--issue)]"}>{formatDelta(karmaDelta)} in observed window</small></div>
