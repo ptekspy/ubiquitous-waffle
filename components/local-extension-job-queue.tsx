@@ -39,7 +39,7 @@ type QueueSettings = {
 };
 
 type JobKey = "profile" | "deepDive" | "idleCrawl";
-type JobStatus = "waiting" | "running" | "success" | "error";
+type JobStatus = "waiting" | "running" | "success" | "error" | "stopped";
 
 type JobView = {
   key: JobKey;
@@ -61,6 +61,7 @@ const MAX_DEEP_DIVE_RUN_ALL = 500;
 const MAX_IDLE_CRAWL_RUN_ALL = 25;
 const TICK_MS = 1000;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
+const AUTOMATION_STORAGE_SUFFIX = "automation-enabled";
 const MIN_ERROR_RETRY_MS = 60 * 1000;
 const MAX_ERROR_RETRY_MS = 5 * 60 * 1000;
 
@@ -96,6 +97,20 @@ async function fetchQueueSettings(): Promise<QueueSettings> {
 
 function storageKey(username: string, key: JobKey): string {
   return `${STORAGE_PREFIX}:${username.toLowerCase()}:${key}`;
+}
+
+function automationStorageKey(username: string): string {
+  return `${STORAGE_PREFIX}:${username.toLowerCase()}:${AUTOMATION_STORAGE_SUFFIX}`;
+}
+
+function readAutomationEnabled(username: string): boolean {
+  if (typeof window === "undefined") return true;
+  return window.localStorage.getItem(automationStorageKey(username)) !== "false";
+}
+
+function writeAutomationEnabled(username: string, enabled: boolean): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(automationStorageKey(username), enabled ? "true" : "false");
 }
 
 function readLastRun(username: string, key: JobKey): number | null {
@@ -169,7 +184,12 @@ function statusClass(status: JobStatus): string {
   if (status === "running") return "status-pill status-panel--wait";
   if (status === "success") return "status-pill status-panel--ok";
   if (status === "error") return "status-pill status-panel--off";
+  if (status === "stopped") return "status-pill status-panel--off";
   return "status-pill";
+}
+
+function buttonClass(extra = ""): string {
+  return `rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50 ${extra}`.trim();
 }
 
 function errorMessage(error: unknown): string {
@@ -213,7 +233,9 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   const [now, setNow] = useState(Date.now());
   const [settings, setSettings] = useState<QueueSettings>(() => defaultSettings());
   const [jobs, setJobs] = useState<JobView[]>([]);
+  const [automationEnabled, setAutomationEnabled] = useState(true);
   const runningRef = useRef<JobKey | null>(null);
+  const stopRequestedRef = useRef(false);
   const usernameRef = useRef(normalisedUsername);
   const settingsRef = useRef(settings);
   const refreshRef = useRef(onRefresh);
@@ -227,6 +249,12 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     importedRef.current = onImported;
     statusRef.current = onStatus;
   }, [normalisedUsername, onImported, onRefresh, onStatus, settings]);
+
+  useEffect(() => {
+    if (!normalisedUsername) return;
+    setAutomationEnabled(readAutomationEnabled(normalisedUsername));
+    stopRequestedRef.current = false;
+  }, [normalisedUsername]);
 
   useEffect(() => {
     let cancelled = false;
@@ -314,6 +342,22 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     });
   }
 
+  function markStopped(key: JobKey, detail: string, startedAt: number) {
+    const usernameValue = usernameRef.current;
+    const cadence = cadenceFor(key);
+    const stoppedAt = Date.now();
+    stopRequestedRef.current = false;
+    writeLastRun(usernameValue, key, stoppedAt);
+    updateJob(key, {
+      status: "stopped",
+      detail,
+      lastRunAt: stoppedAt,
+      nextRunAt: stoppedAt + cadence,
+      lastDurationMs: stoppedAt - startedAt,
+    });
+    statusRef.current(detail);
+  }
+
   function markFailed(key: JobKey, detail: string, startedAt: number, retryDelayMs = retryDelayFor(key)) {
     const usernameValue = usernameRef.current;
     const failedAt = Date.now();
@@ -334,6 +378,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     if (!usernameValue || !isValidRedditUsername(usernameValue)) return;
 
     const startedAt = Date.now();
+    stopRequestedRef.current = false;
     runningRef.current = "profile";
     updateJob("profile", { status: "running", detail: `Scanning u/${usernameValue} through PaidPolitely Capture.` });
     statusRef.current(`Running profile scan for u/${usernameValue} through the extension.`);
@@ -351,6 +396,11 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         return;
       }
 
+      if (stopRequestedRef.current) {
+        markStopped("profile", `Stopped profile scan for u/${usernameValue} before importing returned data.`, startedAt);
+        return;
+      }
+
       setJobDetail("profile", `Profile scan returned data for u/${usernameValue}; saving metric point.`);
       const imported = await importBrowserPayload(JSON.stringify(response.payload), {
         enqueueDeepDiveJobs: false,
@@ -363,6 +413,11 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       }
 
       importedRef.current(imported.data);
+      if (stopRequestedRef.current) {
+        markStopped("profile", `Stopped profile scan after saving metric point for u/${imported.data.profile.username}.`, startedAt);
+        return;
+      }
+
       markDone("profile", `Saved profile metric point for u/${imported.data.profile.username}.`, startedAt);
       statusRef.current(`Saved scheduled profile metric point for u/${imported.data.profile.username}.`);
     } catch (error) {
@@ -380,15 +435,22 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
     const startedAt = Date.now();
     const limit = runAllDue ? MAX_DEEP_DIVE_RUN_ALL : Math.max(1, settingsRef.current.deepDiveBatchSize);
+    stopRequestedRef.current = false;
     runningRef.current = "deepDive";
     updateJob("deepDive", { status: "running", detail: runAllDue ? "Claiming every due post deep-dive job." : `Claiming up to ${limit} due post deep-dive jobs.` });
     statusRef.current(runAllDue ? "Running all due extension-backed post deep dives." : `Running extension-backed post deep-dive batch of up to ${limit}.`);
 
     let completed = 0;
     let exhausted = false;
+    let stopped = false;
 
     try {
       for (let index = 0; index < limit; index += 1) {
+        if (stopRequestedRef.current) {
+          stopped = true;
+          break;
+        }
+
         setJobDetail("deepDive", `Checking for due post deep-dive job ${index + 1}${runAllDue ? "" : `/${limit}`}.`);
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok) {
@@ -421,10 +483,21 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         }
 
         completed += 1;
+        if (stopRequestedRef.current) {
+          stopped = true;
+          break;
+        }
+
         setJobDetail("deepDive", `Saved ${completed} deep-dive result${completed === 1 ? "" : "s"}; checking for the next due post.`);
       }
 
       if (completed > 0) await refreshRef.current();
+      if (stopped) {
+        const detail = completed > 0 ? `Stopped deep-dive crawler after safely saving ${completed} post${completed === 1 ? "" : "s"}.` : "Stopped deep-dive crawler before claiming another post.";
+        markStopped("deepDive", detail, startedAt);
+        return;
+      }
+
       const suffix = runAllDue && !exhausted && completed >= MAX_DEEP_DIVE_RUN_ALL ? ` Hit the safety cap of ${MAX_DEEP_DIVE_RUN_ALL}; run again to continue.` : "";
       const detail = completed > 0 ? `Deep crawled ${completed} post${completed === 1 ? "" : "s"}.${suffix}` : "No post deep dives were due; idle crawler can use the browser next.";
       markDone("deepDive", detail, startedAt);
@@ -439,6 +512,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
   async function runIdleCrawlJob(runMany = false) {
     const startedAt = Date.now();
     const limit = runMany ? MAX_IDLE_CRAWL_RUN_ALL : Math.max(1, settingsRef.current.idleCrawlBatchSize);
+    stopRequestedRef.current = false;
     runningRef.current = "idleCrawl";
     updateJob("idleCrawl", { status: "running", detail: `Starting idle crawler batch. Looking for up to ${limit} target${limit === 1 ? "" : "s"}.` });
     statusRef.current(`Running idle crawler batch of up to ${limit}.`);
@@ -447,9 +521,15 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     let posts = 0;
     let comments = 0;
     let users = 0;
+    let stopped = false;
 
     try {
       for (let index = 0; index < limit; index += 1) {
+        if (stopRequestedRef.current) {
+          stopped = true;
+          break;
+        }
+
         setJobDetail("idleCrawl", `Claiming idle target ${index + 1}/${limit} from the server.`);
         const claim = await claimIdleCrawlerTarget();
         if (!claim.ok) {
@@ -491,7 +571,19 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         posts += imported.posts ?? 0;
         comments += imported.comments ?? 0;
         users += imported.users ?? 0;
+        if (stopRequestedRef.current) {
+          stopped = true;
+          break;
+        }
+
         setJobDetail("idleCrawl", `Saved ${targetName}: ${imported.posts ?? 0} posts, ${imported.comments ?? 0} comments, ${imported.users ?? 0} users. Batch total: ${posts} posts, ${comments} comments, ${users} users.`);
+      }
+
+      if (completed > 0) window.dispatchEvent(new Event("paidpolitely-idle-crawler-refresh"));
+      if (stopped) {
+        const detail = completed > 0 ? `Stopped idle crawler after safely saving ${completed} target${completed === 1 ? "" : "s"}; totals: ${posts} posts, ${comments} comments, ${users} users.` : "Stopped idle crawler before claiming another target.";
+        markStopped("idleCrawl", detail, startedAt);
+        return;
       }
 
       const detail = completed > 0 ? `Idle crawled ${completed} target${completed === 1 ? "" : "s"}; saved ${posts} posts, ${comments} comments, and ${users} users.` : "No idle crawl targets were available.";
@@ -507,8 +599,9 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
   function runNow(key: JobKey) {
     if (!isReady || runningRef.current) return;
-    updateJob(key, { nextRunAt: Date.now(), status: "waiting", detail: key === "profile" ? "Manual profile scan requested." : key === "deepDive" ? "Manual deep-dive batch requested." : "Manual idle crawl requested." });
-    kickScheduler();
+    if (key === "profile") void runProfileJob();
+    if (key === "deepDive") void runDeepDiveJob(false);
+    if (key === "idleCrawl") void runIdleCrawlJob(false);
   }
 
   function runAllDueDeepDives() {
@@ -521,13 +614,44 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     void runIdleCrawlJob(true);
   }
 
+  function stopCurrentJob() {
+    const activeKey = runningRef.current;
+    if (!activeKey) return;
+    stopRequestedRef.current = true;
+    const detail = "Stop requested. Finishing the current browser action safely, then this job will stop before the next target.";
+    updateJob(activeKey, { detail });
+    statusRef.current(detail);
+  }
+
+  function toggleAutomation() {
+    if (!normalisedUsername) return;
+    setAutomationEnabled((current) => {
+      const next = !current;
+      writeAutomationEnabled(normalisedUsername, next);
+
+      if (!next) {
+        stopRequestedRef.current = true;
+        const detail = runningRef.current ? "Automation paused. Current job will stop after the in-flight browser action finishes." : "Automation paused. Manual runs are still available.";
+        const activeKey = runningRef.current;
+        if (activeKey) updateJob(activeKey, { detail });
+        statusRef.current(detail);
+      } else {
+        stopRequestedRef.current = false;
+        statusRef.current("Automation resumed. The queue will start the next due job automatically.");
+        kickScheduler();
+      }
+
+      return next;
+    });
+  }
+
   useEffect(() => {
     const timer = window.setInterval(() => setNow(Date.now()), TICK_MS);
     return () => window.clearInterval(timer);
   }, []);
 
   useEffect(() => {
-    if (!isReady || runningRef.current) return;
+    if (!isReady || !automationEnabled || runningRef.current) return;
     const due = jobs.find((job) => job.nextRunAt <= now && (job.key !== "deepDive" || Boolean(scanId)));
     if (!due) return;
 
@@ -535,7 +659,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     if (due.key === "deepDive") void runDeepDiveJob(false);
     if (due.key === "idleCrawl") void runIdleCrawlJob(false);
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isReady, jobs, now, scanId]);
+  }, [automationEnabled, isReady, jobs, now, scanId]);
 
   const activeJob = jobs.find((job) => job.status === "running") ?? null;
   const nextJob = useMemo(() => [...jobs].filter((job) => job.key !== "deepDive" || Boolean(scanId)).sort((a, b) => a.nextRunAt - b.nextRunAt)[0] ?? null, [jobs, scanId]);
@@ -550,7 +674,18 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
           <h2 className="mt-2 mb-1 text-2xl font-extrabold tracking-[-0.04em] text-[var(--text)]">Scheduled browser jobs</h2>
           <p className={mutedClass}>Local only. The extension handles Reddit-facing work using this browser session. Idle crawling keeps collecting data when priority work is empty.</p>
         </div>
-        <span className={isReady ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{isReady ? "Extension ready" : "Extension needed"}</span>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className={isReady ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{isReady ? "Extension ready" : "Extension needed"}</span>
+          <span className={automationEnabled ? "status-pill status-panel--ok" : "status-pill status-panel--off"}>{automationEnabled ? "Automation on" : "Automation off"}</span>
+          <button className={buttonClass()} type="button" disabled={!isReady} onClick={toggleAutomation}>
+            {automationEnabled ? "Pause automation" : "Resume automation"}
+          </button>
+          {activeJob ? (
+            <button className={buttonClass("text-[var(--danger)]")} type="button" onClick={stopCurrentJob}>
+              Stop current job
+            </button>
+          ) : null}
+        </div>
       </div>
 
       <div className="mb-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
@@ -558,6 +693,11 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
           <div className="grid gap-2">
             <p className="m-0 font-extrabold text-[var(--text)]">Currently running: {activeJob.title}</p>
             <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">{activeJob.detail}</p>
+          </div>
+        ) : !automationEnabled ? (
+          <div className="grid gap-2">
+            <p className="m-0 font-extrabold text-[var(--text)]">Automation paused</p>
+            <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">Scheduled jobs will not start automatically. Manual Run now, Run all due, and Run sweep buttons are still available.</p>
           </div>
         ) : nextJob ? (
           <div className="grid gap-2">
@@ -586,20 +726,20 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
             <p className="mb-3 text-sm leading-relaxed text-[var(--text-muted)]">{job.detail}</p>
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div className="text-sm font-bold text-[var(--text)]">
-                <span>Next: {job.status === "running" ? "running now" : duration(job.nextRunAt - now)}</span>
+                <span>Next: {job.status === "running" ? "running now" : automationEnabled ? duration(job.nextRunAt - now) : "paused"}</span>
                 <span className="ml-3 text-[var(--text-muted)]">Last duration: {duration(job.lastDurationMs)}</span>
               </div>
               <div className="flex flex-wrap gap-2">
-                <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)} onClick={() => runNow(job.key)}>
+                <button className={buttonClass()} type="button" disabled={!isReady || Boolean(runningRef.current) || (job.key === "deepDive" && !scanId)} onClick={() => runNow(job.key)}>
                   Run now
                 </button>
                 {job.key === "deepDive" ? (
-                  <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current) || !scanId} onClick={runAllDueDeepDives}>
+                  <button className={buttonClass()} type="button" disabled={!isReady || Boolean(runningRef.current) || !scanId} onClick={runAllDueDeepDives}>
                     Run all due
                   </button>
                 ) : null}
                 {job.key === "idleCrawl" ? (
-                  <button className="rounded-[12px] border border-[var(--border-strong)] bg-[var(--surface)] px-3 py-2 text-sm font-extrabold text-[var(--accent-strong)] disabled:cursor-not-allowed disabled:opacity-50" type="button" disabled={!isReady || Boolean(runningRef.current)} onClick={runIdleSweep}>
+                  <button className={buttonClass()} type="button" disabled={!isReady || Boolean(runningRef.current)} onClick={runIdleSweep}>
                     Run sweep
                   </button>
                 ) : null}
