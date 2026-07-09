@@ -279,6 +279,15 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     if (broadcast) statusRef.current(detail);
   }
 
+  function kickScheduler() {
+    setNow((value) => Math.max(Date.now(), value + 1));
+  }
+
+  function finishRunningJob() {
+    runningRef.current = null;
+    kickScheduler();
+  }
+
   function cadenceFor(key: JobKey): number {
     if (key === "profile") return settingsRef.current.profileScanInterval;
     if (key === "deepDive") return settingsRef.current.deepDiveInterval;
@@ -359,7 +368,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     } catch (error) {
       markFailed("profile", errorMessage(error), startedAt);
     } finally {
-      runningRef.current = null;
+      finishRunningJob();
     }
   }
 
@@ -423,7 +432,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     } catch (error) {
       markFailed("deepDive", errorMessage(error), startedAt);
     } finally {
-      runningRef.current = null;
+      finishRunningJob();
     }
   }
 
@@ -492,14 +501,14 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     } catch (error) {
       markFailed("idleCrawl", errorMessage(error), startedAt);
     } finally {
-      runningRef.current = null;
+      finishRunningJob();
     }
   }
 
   function runNow(key: JobKey) {
     if (!isReady || runningRef.current) return;
     updateJob(key, { nextRunAt: Date.now(), status: "waiting", detail: key === "profile" ? "Manual profile scan requested." : key === "deepDive" ? "Manual deep-dive batch requested." : "Manual idle crawl requested." });
-    setNow(Date.now());
+    kickScheduler();
   }
 
   function runAllDueDeepDives() {
