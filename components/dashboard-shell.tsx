@@ -20,6 +20,8 @@ const navigationGroups: NavigationGroup[] = [
       { label: "Account", href: "/dashboard/account" },
       { label: "Jobs", href: "/dashboard/jobs" },
       { label: "Crawler", href: "/dashboard/crawler", badge: "new" },
+      { label: "Users", href: "/dashboard/users" },
+      { label: "Subreddits", href: "/dashboard/subreddits" },
       { label: "Settings", href: "/dashboard/settings" },
     ],
   },
@@ -45,6 +47,8 @@ function pageTitle(pathname: string): { eyebrow: string; title: string } {
   if (pathname.startsWith("/dashboard/account")) return { eyebrow: "Account intelligence", title: "Account Analytics" };
   if (pathname.startsWith("/dashboard/jobs")) return { eyebrow: "Browser automation", title: "Scheduled Jobs" };
   if (pathname.startsWith("/dashboard/crawler")) return { eyebrow: "Always-on crawling", title: "Crawler Data" };
+  if (pathname.startsWith("/dashboard/users")) return { eyebrow: "Discovered creators", title: "Users" };
+  if (pathname.startsWith("/dashboard/subreddits")) return { eyebrow: "Community coverage", title: "Subreddits" };
   if (pathname.startsWith("/dashboard/trends")) return { eyebrow: "Growth signals", title: "Trends" };
   if (pathname.startsWith("/dashboard/product-ops")) return { eyebrow: "Operating system", title: "Product Ops" };
   if (pathname.startsWith("/dashboard/settings")) return { eyebrow: "Workspace setup", title: "Settings" };
