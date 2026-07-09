@@ -623,3 +623,102 @@ model PlannerJob {
   @@index([accountId, createdAt])
   @@index([scanId])
 }
+
+model IdleCrawlTarget {
+  id               String    @id
+  ownerUserId      String
+  dedupeKey        String
+  kind             String
+  label            String
+  subreddit        String?
+  username         String?
+  feed             String
+  priority         Int       @default(100)
+  intervalMs       Int
+  enabled          Boolean   @default(true)
+  lockedAt         DateTime?
+  lastStartedAt    DateTime?
+  lastCompletedAt  DateTime?
+  nextDueAt        DateTime  @default(now())
+  lastStatus       String?
+  lastError        String?
+  lastPostCount    Int       @default(0)
+  lastCommentCount Int       @default(0)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @default(now()) @updatedAt
+
+  @@unique([ownerUserId, dedupeKey])
+  @@index([ownerUserId, enabled, nextDueAt])
+  @@index([ownerUserId, kind])
+}
+
+model CollectedRedditUser {
+  id                   String    @id
+  ownerUserId          String
+  username             String
+  source               String?
+  enabled              Boolean   @default(true)
+  postMentions         Int       @default(0)
+  commentMentions      Int       @default(0)
+  latestScore          Int?
+  latestFollowers      Int?
+  firstSeenAt          DateTime  @default(now())
+  lastSeenAt           DateTime  @default(now())
+  lastProfileCrawledAt DateTime?
+  nextProfileCrawlAt   DateTime  @default(now())
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @default(now()) @updatedAt
+
+  @@unique([ownerUserId, username])
+  @@index([ownerUserId, enabled, nextProfileCrawlAt])
+}
+
+model CrawledPost {
+  id          String   @id
+  ownerUserId String
+  targetId    String?
+  redditId    String
+  title       String
+  subreddit   String
+  author      String?
+  permalink   String
+  url         String?
+  feed        String
+  source      String
+  createdUtc  Int
+  score       Int      @default(0)
+  numComments Int      @default(0)
+  upvoteRatio Float?
+  over18      Boolean  @default(false)
+  firstSeenAt DateTime @default(now())
+  lastSeenAt  DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @default(now()) @updatedAt
+
+  @@unique([ownerUserId, redditId])
+  @@index([ownerUserId, lastSeenAt])
+  @@index([ownerUserId, subreddit, lastSeenAt])
+}
+
+model CrawledComment {
+  id           String   @id
+  ownerUserId  String
+  targetId     String?
+  redditId     String
+  postRedditId String?
+  author       String?
+  body         String
+  subreddit    String
+  permalink    String?
+  feed         String
+  source       String
+  createdUtc   Int
+  score        Int      @default(0)
+  firstSeenAt  DateTime @default(now())
+  lastSeenAt   DateTime @default(now())
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @default(now()) @updatedAt
+
+  @@unique([ownerUserId, redditId])
+  @@index([ownerUserId, lastSeenAt])
+}
