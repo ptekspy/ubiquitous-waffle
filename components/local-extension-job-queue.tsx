@@ -176,6 +176,37 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Unknown error.");
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function arrayCount(value: unknown): number {
+  return Array.isArray(value) ? value.length : 0;
+}
+
+function payloadCounts(payload: unknown): { posts: number; comments: number } {
+  if (!isRecord(payload)) return { posts: 0, comments: 0 };
+  return { posts: arrayCount(payload.posts), comments: arrayCount(payload.comments) };
+}
+
+function feedLabel(feed: string): string {
+  return `/${feed.replace(":", " ")}`;
+}
+
+function idleTargetLabel(target: { kind: string; label: string; feed: string; subreddit: string | null; username: string | null; forced?: boolean }): string {
+  if (target.kind === "HOME_FEED") return `home ${feedLabel(target.feed)}`;
+  if (target.kind === "SUBREDDIT_FEED") return `r/${target.subreddit ?? "unknown"} ${feedLabel(target.feed)}`;
+  if (target.kind === "USER_PROFILE") return `u/${target.username ?? "unknown"} profile`;
+  return target.label;
+}
+
+function idleTargetKindLabel(target: { kind: string }): string {
+  if (target.kind === "HOME_FEED") return "home feed";
+  if (target.kind === "SUBREDDIT_FEED") return "subreddit feed";
+  if (target.kind === "USER_PROFILE") return "user profile";
+  return "crawler target";
+}
+
 export function LocalExtensionJobQueue({ username, extensionState, scanId, onImported, onRefresh, onStatus }: LocalExtensionJobQueueProps) {
   const normalisedUsername = normaliseRedditUsername(username);
   const isReady = extensionState === "installed" && isValidRedditUsername(normalisedUsername);
@@ -243,6 +274,11 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     setJobs((current) => current.map((job) => (job.key === key ? { ...job, ...patch } : job)));
   }
 
+  function setJobDetail(key: JobKey, detail: string, broadcast = false) {
+    updateJob(key, { status: "running", detail });
+    if (broadcast) statusRef.current(detail);
+  }
+
   function cadenceFor(key: JobKey): number {
     if (key === "profile") return settingsRef.current.profileScanInterval;
     if (key === "deepDive") return settingsRef.current.deepDiveInterval;
@@ -306,6 +342,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         return;
       }
 
+      setJobDetail("profile", `Profile scan returned data for u/${usernameValue}; saving metric point.`);
       const imported = await importBrowserPayload(JSON.stringify(response.payload), {
         enqueueDeepDiveJobs: false,
         enqueuePlannerJob: false,
@@ -343,6 +380,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
     try {
       for (let index = 0; index < limit; index += 1) {
+        setJobDetail("deepDive", `Checking for due post deep-dive job ${index + 1}${runAllDue ? "" : `/${limit}`}.`);
         const claim = await claimBrowserCrawlerJob();
         if (!claim.ok) {
           markFailed("deepDive", claim.error, startedAt);
@@ -354,8 +392,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
           break;
         }
 
-        updateJob("deepDive", { status: "running", detail: `Deep crawling ${completed + 1}${runAllDue ? "" : `/${limit}`} · r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}` });
-        statusRef.current(`Deep crawling ${completed + 1}${runAllDue ? "" : `/${limit}`} · r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}`);
+        setJobDetail("deepDive", `Deep crawling ${completed + 1}${runAllDue ? "" : `/${limit}`} · r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}`, true);
 
         const response = await sendExtensionMessage<ExtensionCrawlerResponse>({
           type: "PAIDPOLITELY_DEEP_DIVE_REDDIT_POST",
@@ -367,6 +404,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
           return;
         }
 
+        setJobDetail("deepDive", `Saving deep-dive results for r/${claim.job.subreddit}: ${claim.job.title.slice(0, 80)}.`);
         const imported = await importBrowserCrawlerPayload(claim.job.id, response.payload);
         if (!imported.ok) {
           markFailed("deepDive", imported.error, startedAt);
@@ -374,6 +412,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         }
 
         completed += 1;
+        setJobDetail("deepDive", `Saved ${completed} deep-dive result${completed === 1 ? "" : "s"}; checking for the next due post.`);
       }
 
       if (completed > 0) await refreshRef.current();
@@ -392,7 +431,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
     const startedAt = Date.now();
     const limit = runMany ? MAX_IDLE_CRAWL_RUN_ALL : Math.max(1, settingsRef.current.idleCrawlBatchSize);
     runningRef.current = "idleCrawl";
-    updateJob("idleCrawl", { status: "running", detail: `Claiming up to ${limit} idle crawl target${limit === 1 ? "" : "s"}.` });
+    updateJob("idleCrawl", { status: "running", detail: `Starting idle crawler batch. Looking for up to ${limit} target${limit === 1 ? "" : "s"}.` });
     statusRef.current(`Running idle crawler batch of up to ${limit}.`);
 
     let completed = 0;
@@ -402,16 +441,22 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
     try {
       for (let index = 0; index < limit; index += 1) {
+        setJobDetail("idleCrawl", `Claiming idle target ${index + 1}/${limit} from the server.`);
         const claim = await claimIdleCrawlerTarget();
         if (!claim.ok) {
           markFailed("idleCrawl", claim.error, startedAt);
           return;
         }
 
-        if (!claim.target) break;
+        if (!claim.target) {
+          setJobDetail("idleCrawl", `No idle target returned after ${completed} completed target${completed === 1 ? "" : "s"}.`);
+          break;
+        }
 
-        updateJob("idleCrawl", { status: "running", detail: `Idle crawling ${completed + 1}/${limit} · ${claim.target.label}${claim.target.forced ? " · filler" : ""}` });
-        statusRef.current(`Idle crawling ${claim.target.label}${claim.target.forced ? " as filler" : ""}.`);
+        const targetName = idleTargetLabel(claim.target);
+        const targetKind = idleTargetKindLabel(claim.target);
+        const fillerText = claim.target.forced ? " as filler because no due priority target was available" : "";
+        setJobDetail("idleCrawl", `Crawling ${targetKind}: ${targetName}${fillerText}. Batch item ${completed + 1}/${limit}.`, true);
 
         const response = await sendExtensionMessage<ExtensionCrawlerResponse>({
           type: "PAIDPOLITELY_CRAWL_REDDIT_TARGET",
@@ -420,14 +465,16 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
 
         if (!response.ok) {
           await reportIdleCrawlerFailure(claim.target.id, response.error);
-          markFailed("idleCrawl", response.error, startedAt);
+          markFailed("idleCrawl", `${targetName} failed: ${response.error}`, startedAt);
           return;
         }
 
+        const returned = payloadCounts(response.payload);
+        setJobDetail("idleCrawl", `Extension finished ${targetName}. Importing ${returned.posts} post${returned.posts === 1 ? "" : "s"} and ${returned.comments} comment${returned.comments === 1 ? "" : "s"}.`);
         const imported = await importIdleCrawlerPayload(claim.target.id, response.payload);
         if (!imported.ok) {
           await reportIdleCrawlerFailure(claim.target.id, imported.error);
-          markFailed("idleCrawl", imported.error, startedAt);
+          markFailed("idleCrawl", `${targetName} import failed: ${imported.error}`, startedAt);
           return;
         }
 
@@ -435,6 +482,7 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         posts += imported.posts ?? 0;
         comments += imported.comments ?? 0;
         users += imported.users ?? 0;
+        setJobDetail("idleCrawl", `Saved ${targetName}: ${imported.posts ?? 0} posts, ${imported.comments ?? 0} comments, ${imported.users ?? 0} users. Batch total: ${posts} posts, ${comments} comments, ${users} users.`);
       }
 
       const detail = completed > 0 ? `Idle crawled ${completed} target${completed === 1 ? "" : "s"}; saved ${posts} posts, ${comments} comments, and ${users} users.` : "No idle crawl targets were available.";
@@ -497,7 +545,19 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
       </div>
 
       <div className="mb-4 rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4">
-        {activeJob ? <p className="m-0 font-extrabold text-[var(--text)]">Currently running: {activeJob.title}</p> : nextJob ? <p className="m-0 font-extrabold text-[var(--text)]">Next job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p> : <p className="m-0 font-extrabold text-[var(--text)]">No local jobs scheduled.</p>}
+        {activeJob ? (
+          <div className="grid gap-2">
+            <p className="m-0 font-extrabold text-[var(--text)]">Currently running: {activeJob.title}</p>
+            <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">{activeJob.detail}</p>
+          </div>
+        ) : nextJob ? (
+          <div className="grid gap-2">
+            <p className="m-0 font-extrabold text-[var(--text)]">Next job: {nextJob.title} in {duration(nextJob.nextRunAt - now)}</p>
+            <p className="m-0 text-sm leading-relaxed text-[var(--text-muted)]">{nextJob.detail}</p>
+          </div>
+        ) : (
+          <p className="m-0 font-extrabold text-[var(--text)]">No local jobs scheduled.</p>
+        )}
       </div>
 
       <div className="grid gap-3 lg:grid-cols-3">
