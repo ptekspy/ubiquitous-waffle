@@ -7,6 +7,7 @@ export type ParsedHistoricalPost = {
   score: number;
   numComments: number;
   upvoteRatio: number | null;
+  viewCount: number | null;
   raw?: Record<string, unknown>;
 };
 
@@ -51,6 +52,9 @@ type RawJsonPost = {
   score?: unknown;
   numComments?: unknown;
   upvoteRatio?: unknown;
+  viewCount?: unknown;
+  views?: unknown;
+  latestViews?: unknown;
 };
 
 type RawJsonComment = {
@@ -61,6 +65,9 @@ type RawJsonComment = {
   createdUtc?: unknown;
   score?: unknown;
   linkTitle?: unknown;
+  viewCount?: unknown;
+  views?: unknown;
+  latestViews?: unknown;
 };
 
 function htmlDecode(value: string): string {
@@ -176,6 +183,12 @@ function segmentAround(raw: string, pattern: RegExp, before = 900, after = 3000)
   return raw.slice(Math.max(0, match.index - before), Math.min(raw.length, match.index + after));
 }
 
+function elementSegment(raw: string, start: number, closingTag: string): string {
+  const closeIndex = raw.indexOf(closingTag, start);
+  if (closeIndex === -1) return raw.slice(start, Math.min(raw.length, start + 16000));
+  return raw.slice(start, closeIndex + closingTag.length);
+}
+
 function numberBeforeLabel(text: string, label: string): number | null {
   const escapedLabel = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   const pattern = new RegExp(`([0-9][0-9,.]*(?:\\.[0-9]+)?\\s*[kKmMbB]?)\\s+${escapedLabel}\\b`, "i");
@@ -192,6 +205,10 @@ function numberAfterLabel(text: string, label: string): number | null {
 
 function metricFromText(text: string, label: string): number | null {
   return numberBeforeLabel(text, label) ?? numberAfterLabel(text, label);
+}
+
+function viewCountFromText(text: string): number | null {
+  return metricFromText(text, "views") ?? metricFromText(text, "view") ?? metricFromText(text, "total views") ?? metricFromText(text, "post views");
 }
 
 function parseFollowers(raw: string): number | null {
@@ -264,7 +281,7 @@ function parseJsonProfileMetrics(payload: Record<string, unknown>): ParsedProfil
 
 function parseHtmlPosts(raw: string): ParsedHistoricalPost[] {
   const posts = new Map<string, ParsedHistoricalPost>();
-  const pattern = /<shreddit-post\b([^>]*)>/gi;
+  const pattern = /<shreddit-post(?=[\s>])([^>]*)>/gi;
   let match: RegExpExecArray | null;
 
   while ((match = pattern.exec(raw))) {
@@ -276,6 +293,9 @@ function parseHtmlPosts(raw: string): ParsedHistoricalPost[] {
     const title = stringValue(attrs["post-title"]) || titleFromNearbyHtml(raw.slice(match.index, match.index + 5000), redditId) || "Untitled Reddit post";
     const subreddit = stringValue(attrs["subreddit-name"]) || stringValue(attrs["subreddit-prefixed-name"]).replace(/^r\//i, "") || subredditFromPermalink(permalink);
     const createdUtc = createdUtcFromTimestamp(stringValue(attrs["created-timestamp"]));
+    const postHtml = elementSegment(raw, match.index, "</shreddit-post>");
+    const postText = stripTags(postHtml);
+    const viewCount = nullableInt(attrs["view-count"] ?? attrs.views ?? attrs["total-views"]) ?? viewCountFromText(postText);
 
     if (!permalink || createdUtc <= 0) continue;
 
@@ -288,6 +308,7 @@ function parseHtmlPosts(raw: string): ParsedHistoricalPost[] {
       score: intValue(attrs.score),
       numComments: intValue(attrs["comment-count"]),
       upvoteRatio: floatValue(attrs["upvote-ratio"]),
+      viewCount,
       raw: {
         postType: attrs["post-type"] || null,
         contentHref: attrs["content-href"] || null,
@@ -316,8 +337,7 @@ function parseHtmlComments(raw: string): ParsedHistoricalComment[] {
     const createdUtc = timeMatches.length > 0 ? createdUtcFromTimestamp(timeMatches.at(-1)?.[1] ?? "") : 0;
     const bodyMatches = [...before.matchAll(/<div[^>]+id="-post-rtjson-content"[^>]*>([\s\S]*?)<\/div>\s*<\/div>/gi)];
     const body = bodyMatches.length > 0 ? stripTags(bodyMatches.at(-1)?.[1] ?? "") : "Comment body unavailable in HTML snapshot";
-    const viewMatches = [...raw.slice(match.index, match.index + 1800).matchAll(/([\d,.]+\s*[kKmMbB]?)\s+views?/gi)];
-    const viewCount = viewMatches.length > 0 ? intValue(viewMatches[0][1].replace(/\s+/g, "")) : null;
+    const viewCount = viewCountFromText(stripTags(raw.slice(match.index, match.index + 1800)));
     const subreddit = subredditFromPermalink(permalink);
 
     if (!permalink || createdUtc <= 0) continue;
@@ -387,6 +407,7 @@ function parseJsonPayload(value: unknown): ParsedHistoricalSnapshot | null {
       score: intValue(row.score),
       numComments: intValue(row.numComments),
       upvoteRatio: floatValue(row.upvoteRatio),
+      viewCount: nullableInt(row.viewCount ?? row.views ?? row.latestViews),
       raw: {},
     };
   }).filter((post): post is ParsedHistoricalPost => Boolean(post));
@@ -408,7 +429,7 @@ function parseJsonPayload(value: unknown): ParsedHistoricalSnapshot | null {
       createdUtc,
       score: intValue(row.score),
       linkTitle: nullableString(row.linkTitle),
-      viewCount: null,
+      viewCount: nullableInt(row.viewCount ?? row.views ?? row.latestViews),
       raw: {},
     };
   }).filter((comment): comment is ParsedHistoricalComment => Boolean(comment));

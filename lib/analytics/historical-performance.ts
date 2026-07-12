@@ -9,6 +9,7 @@ type Observation = {
   createdUtc: number;
   score: number;
   numComments: number;
+  viewCount: number | null;
   observedAt: Date;
 };
 
@@ -29,6 +30,7 @@ type HistoricalCommentRow = CommentObservation;
 type LedgerDay = Omit<HistoricalPerformancePoint, "label">;
 type DateRange = { preset: HistoricalRangePreset; from: Date; to: Date };
 type LedgerPatch = Partial<Omit<LedgerDay, "date" | "cumulativeScore" | "cumulativeViews">>;
+type Summary = HistoricalPerformanceResponse["summary"];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_PRESET: HistoricalRangePreset = "90d";
@@ -53,9 +55,10 @@ function dayFromUtcSeconds(value: number): string {
   return dateKey(new Date(value * 1000));
 }
 
-function parseDate(value: string | null): Date | null {
-  if (!value || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return null;
-  const parsed = new Date(`${value}T00:00:00.000Z`);
+function parseDate(value: string | null, endOfDay = false): Date | null {
+  if (!value) return null;
+  const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
+  const parsed = isDateOnly ? new Date(`${value}T${endOfDay ? "23:59:59.999" : "00:00:00.000"}Z`) : new Date(value);
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
@@ -70,13 +73,14 @@ function resolvePreset(value: string | null): HistoricalRangePreset {
 
 function resolveRange(presetInput: string | null, fromInput: string | null, toInput: string | null, earliest: Date | null): DateRange {
   const explicitFrom = parseDate(fromInput);
-  const to = parseDate(toInput) ?? startOfUtcDay(new Date());
+  const to = parseDate(toInput, true) ?? new Date();
+  const dayTo = startOfUtcDay(to);
   const preset = explicitFrom ? "custom" : resolvePreset(presetInput);
   const days = PRESETS[preset];
 
   if (explicitFrom) return { preset, from: explicitFrom, to };
   if (days === null) return { preset, from: earliest ?? addDays(to, -89), to };
-  return { preset, from: addDays(to, -days + 1), to };
+  return { preset, from: addDays(dayTo, -days + 1), to };
 }
 
 function emptyDay(key: string): LedgerDay {
@@ -110,6 +114,34 @@ function addToLedger(ledger: Map<string, LedgerDay>, key: string, patch: LedgerP
   ledger.set(key, day);
 }
 
+function emptySummary(): Summary {
+  return {
+    postScore: 0,
+    commentScore: 0,
+    scoreDelta: 0,
+    postsCreated: 0,
+    commentsMade: 0,
+    repliesReceived: 0,
+    viewsDelta: null,
+  };
+}
+
+function addToSummary(summary: Summary, patch: LedgerPatch) {
+  summary.postScore += patch.postScore ?? 0;
+  summary.commentScore += patch.commentScore ?? 0;
+  summary.scoreDelta += patch.scoreDelta ?? 0;
+  summary.postsCreated += patch.postsCreated ?? 0;
+  summary.commentsMade += patch.commentsMade ?? 0;
+  summary.repliesReceived += patch.repliesReceived ?? 0;
+  if (patch.viewsDelta !== undefined && patch.viewsDelta !== null) summary.viewsDelta = (summary.viewsDelta ?? 0) + patch.viewsDelta;
+}
+
+function addToSummaryWhenInRange(summary: Summary, range: DateRange, occurredAt: Date, patch: LedgerPatch) {
+  const time = occurredAt.getTime();
+  if (!Number.isFinite(time) || time < range.from.getTime() || time > range.to.getTime()) return;
+  addToSummary(summary, patch);
+}
+
 function labelFor(key: string): string {
   return new Intl.DateTimeFormat("en-GB", { day: "numeric", month: "short" }).format(new Date(`${key}T00:00:00.000Z`));
 }
@@ -130,6 +162,7 @@ function addPostObservations(ledger: Map<string, LedgerDay>, observations: Obser
 
     let previousScore: number | null = null;
     let previousComments: number | null = null;
+    let previousViews: number | null = null;
     let countedCreation = false;
 
     for (const row of sorted) {
@@ -150,6 +183,12 @@ function addPostObservations(ledger: Map<string, LedgerDay>, observations: Obser
           scoreDelta,
           repliesReceived: commentDelta,
         });
+      }
+
+      if (row.viewCount !== null) {
+        const viewsDelta = previousViews === null ? row.viewCount : Math.max(0, row.viewCount - previousViews);
+        addToLedger(ledger, dateKey(row.observedAt), { viewsDelta });
+        previousViews = row.viewCount;
       }
 
       previousScore = row.score;
@@ -204,6 +243,99 @@ function addCommentObservations(ledger: Map<string, LedgerDay>, comments: Commen
   }
 }
 
+function exactSummaryForRange(observations: Observation[], comments: CommentObservation[], range: DateRange): Summary {
+  const output = emptySummary();
+  const postsById = new Map<string, Observation[]>();
+  const commentsById = new Map<string, CommentObservation[]>();
+
+  for (const observation of observations) {
+    const rows = postsById.get(observation.redditId) ?? [];
+    rows.push(observation);
+    postsById.set(observation.redditId, rows);
+  }
+
+  for (const comment of comments) {
+    const rows = commentsById.get(comment.redditId) ?? [];
+    rows.push(comment);
+    commentsById.set(comment.redditId, rows);
+  }
+
+  for (const rows of postsById.values()) {
+    const sorted = rows
+      .filter((row) => row.createdUtc > 0)
+      .sort((a, b) => a.observedAt.getTime() - b.observedAt.getTime());
+    let previousScore: number | null = null;
+    let previousComments: number | null = null;
+    let previousViews: number | null = null;
+    let countedCreation = false;
+
+    for (const row of sorted) {
+      if (previousScore === null) {
+        addToSummaryWhenInRange(output, range, new Date(row.createdUtc * 1000), {
+          postScore: row.score,
+          scoreDelta: row.score,
+          postsCreated: countedCreation ? 0 : 1,
+          repliesReceived: row.numComments,
+        });
+        countedCreation = true;
+      } else {
+        const scoreDelta = row.score - previousScore;
+        const commentDelta = Math.max(0, row.numComments - (previousComments ?? row.numComments));
+        addToSummaryWhenInRange(output, range, row.observedAt, {
+          postScore: scoreDelta,
+          scoreDelta,
+          repliesReceived: commentDelta,
+        });
+      }
+
+      if (row.viewCount !== null) {
+        const viewsDelta = previousViews === null ? row.viewCount : Math.max(0, row.viewCount - previousViews);
+        addToSummaryWhenInRange(output, range, row.observedAt, { viewsDelta });
+        previousViews = row.viewCount;
+      }
+
+      previousScore = row.score;
+      previousComments = row.numComments;
+    }
+  }
+
+  for (const rows of commentsById.values()) {
+    const sorted = rows
+      .filter((row) => row.createdUtc > 0)
+      .sort((a, b) => a.observedAt.getTime() - b.observedAt.getTime());
+    let previousScore: number | null = null;
+    let previousViews: number | null = null;
+    let countedCreation = false;
+
+    for (const row of sorted) {
+      if (previousScore === null) {
+        addToSummaryWhenInRange(output, range, new Date(row.createdUtc * 1000), {
+          commentScore: row.score,
+          scoreDelta: row.score,
+          commentsMade: countedCreation ? 0 : 1,
+        });
+        countedCreation = true;
+      } else {
+        const scoreDelta = row.score - previousScore;
+        addToSummaryWhenInRange(output, range, row.observedAt, {
+          commentScore: scoreDelta,
+          scoreDelta,
+        });
+      }
+
+      if (row.viewCount !== null) {
+        const viewsDelta = previousViews === null ? row.viewCount : Math.max(0, row.viewCount - previousViews);
+        addToSummaryWhenInRange(output, range, row.observedAt, { viewsDelta });
+        previousViews = row.viewCount;
+      }
+
+      previousScore = row.score;
+    }
+  }
+
+  return output;
+}
+
 function finalise(ledger: Map<string, LedgerDay>, range: DateRange): HistoricalPerformancePoint[] {
   const keys = [...ledger.keys()].sort();
   const startKey = keys[0] ?? dateKey(range.from);
@@ -236,7 +368,7 @@ function finalise(ledger: Map<string, LedgerDay>, range: DateRange): HistoricalP
 
 async function getHistoricalPostRows(ownerUserId: string): Promise<HistoricalPostRow[]> {
   return prisma.$queryRaw<HistoricalPostRow[]>`
-    SELECT "redditId", "title", "subreddit", "permalink", "createdUtc", "score", "numComments", "observedAt"
+    SELECT "redditId", "title", "subreddit", "permalink", "createdUtc", "score", "numComments", "viewCount", "observedAt"
     FROM "HistoricalPostObservation"
     WHERE "ownerUserId" = ${ownerUserId}
     ORDER BY "observedAt" ASC
@@ -267,10 +399,11 @@ async function getLivePostObservations(ownerUserId: string): Promise<Observation
       createdUtc: true,
       score: true,
       numComments: true,
+      latestViewCount: true,
       scan: { select: { fetchedAt: true, capturedAt: true } },
       metricSnapshots: {
         orderBy: { capturedAt: "asc" },
-        select: { capturedAt: true, score: true, numComments: true },
+        select: { capturedAt: true, score: true, numComments: true, viewCount: true },
       },
     },
   });
@@ -280,14 +413,24 @@ async function getLivePostObservations(ownerUserId: string): Promise<Observation
 
   for (const post of snapshots) {
     const observedAt = post.scan.capturedAt ?? post.scan.fetchedAt;
-    const baseKey = `${post.redditId}:${observedAt.toISOString()}:${post.score}:${post.numComments}`;
+    const baseKey = `${post.redditId}:${observedAt.toISOString()}:${post.score}:${post.numComments}:${post.latestViewCount ?? "null"}`;
     if (!seen.has(baseKey)) {
-      observations.push({ ...post, observedAt });
+      observations.push({
+        redditId: post.redditId,
+        title: post.title,
+        subreddit: post.subreddit,
+        permalink: post.permalink,
+        createdUtc: post.createdUtc,
+        score: post.score,
+        numComments: post.numComments,
+        observedAt,
+        viewCount: post.latestViewCount,
+      });
       seen.add(baseKey);
     }
 
     for (const metric of post.metricSnapshots) {
-      const key = `${post.redditId}:${metric.capturedAt.toISOString()}:${metric.score}:${metric.numComments}`;
+      const key = `${post.redditId}:${metric.capturedAt.toISOString()}:${metric.score}:${metric.numComments}:${metric.viewCount ?? "null"}`;
       if (seen.has(key)) continue;
       observations.push({
         redditId: post.redditId,
@@ -297,6 +440,7 @@ async function getLivePostObservations(ownerUserId: string): Promise<Observation
         createdUtc: post.createdUtc,
         score: metric.score,
         numComments: metric.numComments,
+        viewCount: metric.viewCount,
         observedAt: metric.capturedAt,
       });
       seen.add(key);
@@ -336,19 +480,6 @@ async function getLiveCommentObservations(ownerUserId: string): Promise<CommentO
   }));
 }
 
-function summary(points: HistoricalPerformancePoint[]): HistoricalPerformanceResponse["summary"] {
-  const viewsValues = points.map((point) => point.viewsDelta).filter((value): value is number => value !== null);
-  return {
-    postScore: points.reduce((sum, point) => sum + point.postScore, 0),
-    commentScore: points.reduce((sum, point) => sum + point.commentScore, 0),
-    scoreDelta: points.reduce((sum, point) => sum + point.scoreDelta, 0),
-    postsCreated: points.reduce((sum, point) => sum + point.postsCreated, 0),
-    commentsMade: points.reduce((sum, point) => sum + point.commentsMade, 0),
-    repliesReceived: points.reduce((sum, point) => sum + point.repliesReceived, 0),
-    viewsDelta: viewsValues.length > 0 ? viewsValues.reduce((sum, value) => sum + value, 0) : null,
-  };
-}
-
 export async function getHistoricalPerformance(ownerUserId: string, params: { preset?: string | null; from?: string | null; to?: string | null }): Promise<HistoricalPerformanceResponse> {
   const [historicalPosts, historicalComments, livePosts, liveComments] = await Promise.all([
     getHistoricalPostRows(ownerUserId).catch(() => []),
@@ -377,7 +508,7 @@ export async function getHistoricalPerformance(ownerUserId: string, params: { pr
     preset: range.preset,
     from: dateKey(range.from),
     to: dateKey(range.to),
-    summary: summary(points),
+    summary: exactSummaryForRange(observations, comments, range),
     points,
   };
 }

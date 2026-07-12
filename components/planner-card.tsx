@@ -47,9 +47,10 @@ export function PlannerCard({ initialJob }: PlannerCardProps) {
     if (!job || job.status === "COMPLETED" || job.status === "FAILED") return;
 
     let cancelled = false;
+    const jobId = job.id;
 
     async function refresh() {
-      const latestJob = await fetchPlannerJob(job.id);
+      const latestJob = await fetchPlannerJob(jobId);
       if (!cancelled && latestJob) setJob(latestJob);
     }
 

@@ -9,7 +9,8 @@ It lets the PaidPolitely website ask the installed extension to:
 3. Fall back to a quiet background Reddit tab if Reddit blocks or empties the JSON response.
 4. Bring Reddit forward only if login, age confirmation, or troubleshooting is needed.
 5. Capture visible Reddit post metadata from the user's normal browser session when fallback is needed.
-6. Return the captured JSON to the website for `/api/analyze/import`.
+6. Capture post insights for saved posts, including JSON-backed views when Reddit exposes them.
+7. Return the captured JSON to the website for `/api/analyze/import`.
 
 It does **not** request the `cookies` permission and does **not** read Reddit passwords, cookies, session tokens, private messages, or account settings.
 
@@ -44,6 +45,8 @@ If you change any file under `extension/`, go back to `chrome://extensions`, cli
 7. The website imports the payload automatically and renders the analytics dashboard.
 
 The no-tab payload includes `metadata.headless` with page count and truncation flags so you can see whether Reddit still had another cursor after the configured page limit.
+
+Post views are refreshed by the post deep-dive job. The deep dive opens each saved post, tries to read Reddit's post-insight JSON/page state, and falls back to visible insight text.
 
 ## Troubleshooting
 

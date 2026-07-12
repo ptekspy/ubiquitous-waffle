@@ -7,7 +7,7 @@ import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { compactNumber } from "@/utils/compact-number";
 
 type LoadState = "idle" | "loading" | "loaded" | "error";
-type MetricKey = "scoreDelta" | "cumulativeScore" | "postScore" | "commentScore" | "postsCreated" | "commentsMade" | "repliesReceived" | "viewsDelta";
+type MetricKey = "scoreDelta" | "cumulativeScore" | "postScore" | "commentScore" | "postsCreated" | "commentsMade" | "repliesReceived" | "viewsDelta" | "cumulativeViews";
 
 type HistoricalAnalyticsPanelProps = {
   username: string;
@@ -32,6 +32,7 @@ type ImportResult = {
   sourceFileName: string | null;
   postCount: number;
   commentCount: number;
+  viewObservationCount?: number;
   username: string | null;
   accountMetricImported?: boolean;
   profileMetrics?: {
@@ -55,6 +56,11 @@ type ReparseResult = {
   snapshotsChecked: number;
   snapshotsReparsed: number;
   followerSnapshotsImported: number;
+  postObservationsImported: number;
+  commentObservationsImported: number;
+  postViewObservationsImported: number;
+  commentViewObservationsImported: number;
+  viewObservationsImported: number;
   skippedWithoutStoredContent: number;
   skippedWithoutFollowers: number;
   zeroMetricSnapshotsDeleted: number;
@@ -79,7 +85,8 @@ const metrics: Array<{ key: MetricKey; label: string; help: string }> = [
   { key: "postsCreated", label: "Posts", help: "Posts created by day." },
   { key: "commentsMade", label: "Comments made", help: "Comments made by day." },
   { key: "repliesReceived", label: "Replies", help: "Comment count movement on posts." },
-  { key: "viewsDelta", label: "Comment views", help: "Visible comment view deltas from Reddit HTML snapshots, when present." },
+  { key: "viewsDelta", label: "Views", help: "Visible post and comment view deltas from imports and live deep dives, when present." },
+  { key: "cumulativeViews", label: "Cumulative views", help: "Running visible view total from imported snapshots and live post insights." },
 ];
 
 function today(): string {
@@ -269,6 +276,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
       const metricBits = [
         result.profileMetrics?.totalKarma !== null && result.profileMetrics?.totalKarma !== undefined ? `${compactNumber(result.profileMetrics.totalKarma)} karma` : null,
         result.profileMetrics?.followerCount !== null && result.profileMetrics?.followerCount !== undefined ? `${compactNumber(result.profileMetrics.followerCount)} followers` : null,
+        result.viewObservationCount ? `${compactNumber(result.viewObservationCount)} view observations` : null,
       ].filter(Boolean).join(" · ");
       setImportMessage(`Imported ${result.postCount} posts and ${result.commentCount} comments from ${result.sourceFileName ?? result.source}${metricBits ? `, plus ${metricBits}` : ""}.`);
       setImportState("loaded");
@@ -309,7 +317,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
     }
   }
 
-  async function submitFollowerReparse() {
+  async function submitSnapshotReparse() {
     setReparseState("loading");
     setImportMessage(null);
     setError(null);
@@ -324,7 +332,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
         result.zeroAccountFollowersCleared > 0 ? `${result.zeroAccountFollowersCleared} account zero values cleared` : null,
       ].filter(Boolean).join(" · ");
       const skipped = result.skippedWithoutStoredContent > 0 ? ` ${result.skippedWithoutStoredContent} older imports did not have stored raw HTML to reparse.` : "";
-      setImportMessage(`Reparsed ${result.snapshotsReparsed}/${result.snapshotsChecked} stored snapshots and restored ${result.followerSnapshotsImported} follower points.${cleanupBits ? ` ${cleanupBits}.` : ""}${skipped}`);
+      setImportMessage(`Reparsed ${result.snapshotsReparsed}/${result.snapshotsChecked} stored snapshots, refreshed ${result.postObservationsImported} posts and ${result.commentObservationsImported} comments, restored ${result.followerSnapshotsImported} follower points, and found ${result.viewObservationsImported} view observations.${cleanupBits ? ` ${cleanupBits}.` : ""}${skipped}`);
       setReparseState("loaded");
       window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
       window.dispatchEvent(new Event("paidpolitely-workspace-refresh"));
@@ -355,6 +363,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
     ["Posts", history?.summary.postsCreated ?? 0],
     ["Comments", history?.summary.commentsMade ?? 0],
     ["Replies", history?.summary.repliesReceived ?? 0],
+    ...(history?.summary.viewsDelta !== null && history?.summary.viewsDelta !== undefined ? [["Views", history.summary.viewsDelta] as [string, number]] : []),
   ] as Array<[string, number]>, [history]);
 
   return (
@@ -389,7 +398,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
           <div className="mt-3 flex flex-wrap gap-2">
             <button className="button-primary" type="button" disabled={importState === "loading" || (!file && !content.trim())} onClick={() => void submitImport()}>{importState === "loading" ? "Importing…" : "Import historical snapshot"}</button>
             <button className="button-secondary" type="button" disabled={folderImportState === "loading"} onClick={() => void submitFolderImport()}>{folderImportState === "loading" ? "Importing folder…" : "Import folder"}</button>
-            <button className="button-secondary" type="button" disabled={reparseState === "loading" || snapshots.length === 0} onClick={() => void submitFollowerReparse()}>{reparseState === "loading" ? "Reparsing…" : "Reparse followers"}</button>
+            <button className="button-secondary" type="button" disabled={reparseState === "loading" || snapshots.length === 0} onClick={() => void submitSnapshotReparse()}>{reparseState === "loading" ? "Reparsing…" : "Reparse imports"}</button>
             <button className="button-secondary" type="button" disabled={!username.trim()} onClick={() => void onRunFirstScan()}>{hasLiveScan ? "Run scan again" : "Run first scan"}</button>
           </div>
           <p className="mt-3 text-xs text-[var(--text-muted)]">Folder import reads data/historical-snapshots by default. Name files like 2026-07-08-20-30.html, or set HISTORICAL_SNAPSHOT_IMPORT_DIR.</p>
@@ -412,7 +421,7 @@ export function HistoricalAnalyticsPanel({ username, hasLiveScan, onRunFirstScan
         </article>
       </div>
 
-      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-6">
+      <div className="grid gap-3 md:grid-cols-3 xl:grid-cols-7">
         {summaryCards.map(([label, value]) => <div className="rounded-[18px] border border-[var(--border)] bg-[var(--surface-muted)] p-4" key={label}><span className="text-sm text-[var(--text-muted)]">{label}</span><strong className="mt-1 block text-2xl text-[var(--text)]">{compactNumber(value)}</strong></div>)}
       </div>
 

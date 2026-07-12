@@ -7,11 +7,12 @@ import {
   claimIdleCrawlerTarget,
   importBrowserCrawlerPayload,
   importBrowserPayload,
+  importHistoricalSnapshotPayload,
   importIdleCrawlerPayload,
   reportIdleCrawlerFailure,
 } from "@/lib/api/client";
 import { sendExtensionMessage } from "@/lib/extension/client";
-import type { ExtensionScanResponse, ExtensionState } from "@/lib/extension/types";
+import type { ExtensionProfileHtmlSnapshotResponse, ExtensionScanResponse, ExtensionState } from "@/lib/extension/types";
 import type { AnalyzeResponse } from "@/lib/types";
 import { cardClass, mutedClass } from "@/lib/ui/styles";
 import { isValidRedditUsername } from "@/utils/is-valid-reddit-username";
@@ -53,8 +54,8 @@ type JobView = {
 };
 
 const DEFAULT_PROFILE_INTERVAL_MS = 15 * 60 * 1000;
-const DEFAULT_DEEP_DIVE_INTERVAL_MS = 2 * 60 * 60 * 1000;
-const DEFAULT_DEEP_DIVE_BATCH_SIZE = 50;
+const DEFAULT_DEEP_DIVE_INTERVAL_MS = 60 * 60 * 1000;
+const DEFAULT_DEEP_DIVE_BATCH_SIZE = 500;
 const DEFAULT_IDLE_CRAWL_INTERVAL_MS = 30 * 1000;
 const DEFAULT_IDLE_CRAWL_BATCH_SIZE = 3;
 const MAX_DEEP_DIVE_RUN_ALL = 500;
@@ -63,8 +64,10 @@ const TICK_MS = 1000;
 const STORAGE_PREFIX = "paidpolitely-local-extension-job";
 const AUTOMATION_STORAGE_SUFFIX = "automation-enabled";
 const IDLE_CRAWLER_STORAGE_SUFFIX = "idle-crawler-enabled";
+const HISTORICAL_SNAPSHOT_STORAGE_SUFFIX = "historical-snapshot-hour";
 const MIN_ERROR_RETRY_MS = 60 * 1000;
 const MAX_ERROR_RETRY_MS = 5 * 60 * 1000;
+const PROFILE_HTML_SNAPSHOT_TIMEOUT_MS = 12 * 60 * 1000;
 
 function envInterval(raw: string | undefined, fallback: number): number {
   const parsed = Number.parseInt(raw || "", 10);
@@ -108,6 +111,10 @@ function idleCrawlerStorageKey(username: string): string {
   return `${STORAGE_PREFIX}:${username.toLowerCase()}:${IDLE_CRAWLER_STORAGE_SUFFIX}`;
 }
 
+function historicalSnapshotStorageKey(username: string): string {
+  return `${STORAGE_PREFIX}:${username.toLowerCase()}:${HISTORICAL_SNAPSHOT_STORAGE_SUFFIX}`;
+}
+
 function readAutomationEnabled(username: string): boolean {
   if (typeof window === "undefined") return true;
   return window.localStorage.getItem(automationStorageKey(username)) !== "false";
@@ -126,6 +133,38 @@ function readIdleCrawlerEnabled(username: string): boolean {
 function writeIdleCrawlerEnabled(username: string, enabled: boolean): void {
   if (typeof window === "undefined") return;
   window.localStorage.setItem(idleCrawlerStorageKey(username), enabled ? "true" : "false");
+}
+
+function londonParts(date: Date): Record<string, string> {
+  return Object.fromEntries(new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  }).formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+}
+
+function historicalHourKey(date = new Date()): string {
+  const parts = londonParts(date);
+  return `${parts.year}-${parts.month}-${parts.day}-${parts.hour}`;
+}
+
+function historicalSourceFileName(capturedAt: string): string {
+  const parts = londonParts(new Date(capturedAt));
+  return `${parts.year}-${parts.month}-${parts.day}-${parts.hour}-${parts.minute}.html`;
+}
+
+function shouldCaptureHistoricalSnapshot(username: string): boolean {
+  if (typeof window === "undefined") return false;
+  return window.localStorage.getItem(historicalSnapshotStorageKey(username)) !== historicalHourKey();
+}
+
+function markHistoricalSnapshotCaptured(username: string): void {
+  if (typeof window === "undefined") return;
+  window.localStorage.setItem(historicalSnapshotStorageKey(username), historicalHourKey());
 }
 
 function readLastRun(username: string, key: JobKey): number | null {
@@ -209,6 +248,27 @@ function buttonClass(extra = ""): string {
 
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "Unknown error.");
+}
+
+function isInterruptedExtensionSnapshot(error: string): boolean {
+  return /stopped replying|message channel closed|receiving end does not exist|extension context invalidated/i.test(error);
+}
+
+async function captureProfileHtmlSnapshot(username: string): Promise<ExtensionProfileHtmlSnapshotResponse> {
+  const response = await sendExtensionMessage<ExtensionProfileHtmlSnapshotResponse>({
+    type: "PAIDPOLITELY_CAPTURE_REDDIT_PROFILE_HTML",
+    username,
+    openInBackground: true,
+  }, PROFILE_HTML_SNAPSHOT_TIMEOUT_MS);
+
+  if (response.ok || !isInterruptedExtensionSnapshot(response.error)) return response;
+
+  await new Promise((resolve) => window.setTimeout(resolve, 1500));
+  return sendExtensionMessage<ExtensionProfileHtmlSnapshotResponse>({
+    type: "PAIDPOLITELY_CAPTURE_REDDIT_PROFILE_HTML",
+    username,
+    openInBackground: true,
+  }, PROFILE_HTML_SNAPSHOT_TIMEOUT_MS);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -435,8 +495,34 @@ export function LocalExtensionJobQueue({ username, extensionState, scanId, onImp
         return;
       }
 
-      markDone("profile", `Saved profile metric point for u/${imported.data.profile.username}.`, startedAt);
-      statusRef.current(`Saved scheduled profile metric point for u/${imported.data.profile.username}.`);
+      let snapshotDetail = "";
+      if (shouldCaptureHistoricalSnapshot(usernameValue)) {
+        setJobDetail("profile", `Hourly historical snapshot is due; capturing full profile HTML for u/${usernameValue}.`);
+        const snapshot = await captureProfileHtmlSnapshot(usernameValue);
+
+        if (snapshot.ok) {
+          const saved = await importHistoricalSnapshotPayload({
+            username: snapshot.payload.username || usernameValue,
+            content: snapshot.payload.content,
+            capturedAt: snapshot.payload.capturedAt,
+            sourceFileName: historicalSourceFileName(snapshot.payload.capturedAt),
+          });
+
+          if (saved.ok) {
+            markHistoricalSnapshotCaptured(usernameValue);
+            snapshotDetail = ` Also saved hourly HTML snapshot with ${saved.postCount} posts and ${saved.viewObservationCount ?? 0} view observations.`;
+            window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
+            window.dispatchEvent(new Event("paidpolitely-workspace-refresh"));
+          } else {
+            snapshotDetail = ` Hourly HTML snapshot failed: ${saved.error}`;
+          }
+        } else {
+          snapshotDetail = ` Hourly HTML snapshot failed: ${snapshot.error}`;
+        }
+      }
+
+      markDone("profile", `Saved profile metric point for u/${imported.data.profile.username}.${snapshotDetail}`, startedAt);
+      statusRef.current(`Saved scheduled profile metric point for u/${imported.data.profile.username}.${snapshotDetail}`);
     } catch (error) {
       markFailed("profile", errorMessage(error), startedAt);
     } finally {

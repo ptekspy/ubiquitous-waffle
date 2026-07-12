@@ -241,6 +241,8 @@ export async function saveAccountScan(data: RedditAccountData, analytics: Accoun
       postHint: post.postHint,
       contentType: getPostType(post),
       mediaKey: getMediaKey(post),
+      latestViewCount: post.viewCount ?? null,
+      latestInsightAt: post.viewCount !== null && post.viewCount !== undefined ? (toDate(data.capturedAt) ?? new Date()) : null,
     })),
     skipDuplicates: true,
   });

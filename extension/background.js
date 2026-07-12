@@ -54,6 +54,17 @@ async function handleMessage(message) {
     });
   }
 
+  if (message.type === "PAIDPOLITELY_CAPTURE_REDDIT_PROFILE_HTML") {
+    const username = normaliseUsername(message.username);
+    if (!username) {
+      return { ok: false, status: "bad_username", error: "PaidPolitely needs a valid Reddit username." };
+    }
+
+    return captureRedditProfileHtmlSnapshot(username, {
+      openInBackground: message.openInBackground !== false,
+    });
+  }
+
   return { ok: false, status: "unknown_message", error: `Unsupported PaidPolitely message: ${message.type}` };
 }
 
@@ -381,6 +392,61 @@ async function scanRedditProfileFromTab(username, options = { openInBackground: 
   return { ok: true, status: "captured", payload };
 }
 
+async function captureRedditProfileHtmlSnapshot(username, options = { openInBackground: true }) {
+  const tab = await openRedditProfileSnapshotTab(username, { active: !options.openInBackground });
+  const shouldCloseTab = true;
+
+  try {
+    await waitForTabLoad(tab.id);
+    await delay(1000);
+
+    let preflight = await runInTab(tab.id, preflightRedditProfileInPage, [username]);
+
+    if (preflight.status === "needs_login" || preflight.status === "needs_age_confirm") {
+      await focusTab(tab);
+      const action = await withTimeout(
+        runInTab(tab.id, showRedditSignpostOverlayInPage, [preflight.reason]),
+        OVERLAY_TIMEOUT_MS,
+        "Timed out waiting for the user to sign in to Reddit.",
+      );
+
+      if (action?.action === "cancel") return { ok: false, status: "cancelled", error: "Reddit HTML snapshot cancelled before sign-in completed." };
+
+      await waitForTabLoad(tab.id).catch(() => undefined);
+      await delay(1500);
+      preflight = await runInTab(tab.id, preflightRedditProfileInPage, [username]);
+    }
+
+    if (preflight.status !== "ready") {
+      if (!shouldCloseTab) await focusTab(tab);
+      return {
+        ok: false,
+        status: preflight.status,
+        error: preflight.reason || "Reddit profile is not ready to archive. I opened the Reddit tab so you can check what Reddit is showing.",
+      };
+    }
+
+    const payload = await runInTab(tab.id, captureRedditProfileHtmlInPage, [username]);
+    if (!payload?.content || typeof payload.content !== "string") {
+      if (!shouldCloseTab) await focusTab(tab);
+      return { ok: false, status: "empty_capture", error: payload?.error || "Reddit loaded, but the extension could not capture profile HTML." };
+    }
+
+    return { ok: true, status: "captured_profile_html", payload };
+  } catch (error) {
+    if (!shouldCloseTab) await focusTab(tab);
+    return { ok: false, status: "empty_capture", error: error?.message ? `Reddit loaded, but the extension could not capture profile HTML: ${error.message}` : "Reddit loaded, but the extension could not capture profile HTML." };
+  } finally {
+    if (shouldCloseTab && tab?.id) await chrome.tabs.remove(tab.id).catch(() => undefined);
+  }
+}
+
+async function openRedditProfileSnapshotTab(username, options = { active: false }) {
+  const url = REDDIT_PROFILE_URL.replace("{username}", encodeURIComponent(username));
+  const createdTab = await chrome.tabs.create({ url, active: options.active });
+  return { ...createdTab, __paidpolitelyCreated: true };
+}
+
 async function findOrOpenRedditProfileTab(username, options = { active: false }) {
   const tabs = await chrome.tabs.query({ url: ["https://www.reddit.com/*", "https://reddit.com/*"] });
   const lowerUsername = username.toLowerCase();
@@ -396,11 +462,12 @@ async function findOrOpenRedditProfileTab(username, options = { active: false })
 
   if (existingProfileTab?.id) {
     if (existingProfileTab.discarded) await chrome.tabs.reload(existingProfileTab.id).catch(() => undefined);
-    return existingProfileTab;
+    return { ...existingProfileTab, __paidpolitelyCreated: false };
   }
 
   const url = REDDIT_PROFILE_URL.replace("{username}", encodeURIComponent(username));
-  return chrome.tabs.create({ url, active: options.active });
+  const createdTab = await chrome.tabs.create({ url, active: options.active });
+  return { ...createdTab, __paidpolitelyCreated: true };
 }
 
 async function focusTab(tab) {
@@ -627,6 +694,34 @@ async function captureRedditProfileInPage(expectedUsername) {
     const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : token.endsWith("b") ? 1000000000 : 1;
     return Math.round(parseFloat(token) * multiplier);
   };
+  const nullableNumberFrom = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    const parsed = numberFrom(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const viewCountFromNode = (node) => {
+    const attrs = ["view-count", "views", "total-views", "post-view-count"];
+    for (const attr of attrs) {
+      const value = node.getAttribute?.(attr);
+      if (value) return nullableNumberFrom(value);
+    }
+
+    const labels = [
+      node.getAttribute?.("aria-label"),
+      node.getAttribute?.("title"),
+      ...Array.from(node.querySelectorAll?.("[aria-label], [title]") || []).map((child) => child.getAttribute("aria-label") || child.getAttribute("title") || ""),
+      node.innerText || node.textContent || "",
+    ];
+
+    for (const label of labels) {
+      const match = String(label || "").match(/(\d[\d,.]*\s*[kmb]?)\s+(?:total\s+)?views?|(?:total\s+)?views?\s+(\d[\d,.]*\s*[kmb]?)/i);
+      const value = match ? nullableNumberFrom(match[1] || match[2]) : null;
+      if (value !== null) return value;
+    }
+
+    return null;
+  };
   const followerCountFromPage = () => {
     const bodyLines = (document.body?.innerText || "").split("\n").map((line) => line.trim()).filter(Boolean);
     for (const line of bodyLines) {
@@ -653,6 +748,11 @@ async function captureRedditProfileInPage(expectedUsername) {
   };
   const redditIdFromHref = (href) => href?.match(/\/comments\/([^/?#]+)(?:[/?#]|$)/i)?.[1] ?? "";
   const subredditFromHref = (href) => href?.match(/\/r\/([^/]+)\//i)?.[1] ?? "";
+  const titleFromHref = (href) => {
+    const slug = String(href || "").match(/\/comments\/[^/]+\/([^/?#]+)(?:[/?#]|$)/i)?.[1] || "";
+    if (!slug) return "";
+    return slug.replace(/_/g, " ").replace(/\s+/g, " ").trim();
+  };
   const isCommentHref = (href) => /\/comments\/[^/]+\/[^/]+\/comment\//i.test(String(href || ""));
   const isGameOrPromoHref = (href) => {
     const lower = String(href || "").toLowerCase();
@@ -686,6 +786,7 @@ async function captureRedditProfileInPage(expectedUsername) {
       nodes.push(node);
     };
     document.querySelectorAll("shreddit-post").forEach(add);
+    document.querySelectorAll("[post-title][permalink]").forEach(add);
     document.querySelectorAll('[data-testid="post-container"]').forEach(add);
     document.querySelectorAll("article").forEach((node) => {
       const anchor = node.querySelector('a[href*="/comments/"]');
@@ -695,6 +796,7 @@ async function captureRedditProfileInPage(expectedUsername) {
       const href = anchor.getAttribute("href") || "";
       if (isCommentHref(href) || isGameOrPromoHref(href)) return;
       add(anchor.closest("shreddit-post"));
+      add(anchor.closest("[post-title][permalink]"));
       add(anchor.closest('[data-testid="post-container"]'));
       add(anchor.closest("article"));
       add(anchor);
@@ -708,9 +810,9 @@ async function captureRedditProfileInPage(expectedUsername) {
       if (isCommentHref(href) || isGameOrPromoHref(href)) continue;
       const idFromHref = redditIdFromHref(href);
       const id = node.getAttribute?.("id") || (idFromHref ? "t3_" + idFromHref : "browser-post-" + index);
-      const title = text(node.querySelector?.('[slot="title"], a[slot="title"], h1, h2, h3')) || text(anchor);
+      const title = node.getAttribute?.("post-title") || text(node.querySelector?.('[slot="title"], a[slot="title"], [data-testid="post-title"], h1, h2, h3')) || text(anchor) || titleFromHref(href);
       if (/^https?:\/\//i.test(title) && title.includes("/comments/")) continue;
-      const subredditAttribute = node.getAttribute?.("subreddit-prefixed-name") || node.getAttribute?.("subreddit") || "";
+      const subredditAttribute = node.getAttribute?.("subreddit-prefixed-name") || node.getAttribute?.("subreddit") || node.getAttribute?.("subreddit-name") || "";
       const subreddit = subredditFromHref(href) || subredditAttribute.replace(/^r\//i, "");
       const score = numberFrom(node.getAttribute?.("score") || text(node.querySelector?.('[aria-label*="upvote"], [id*="score"], faceplate-number')));
       const numComments = numberFrom(node.getAttribute?.("comment-count") || text(node.querySelector?.('a[href*="/comments/"][aria-label], [aria-label*="comment"]')));
@@ -720,9 +822,10 @@ async function captureRedditProfileInPage(expectedUsername) {
       const createdUtc = Number.isFinite(createdParsed) ? Math.floor(createdParsed / 1000) : Math.floor(Date.now() / 1000);
       if (!title || !subreddit || !href) continue;
       const key = idFromHref || canonical(href) || id;
-      const post = { id, title, subreddit, permalink: canonical(href), score, numComments, createdUtc };
+      const viewCount = viewCountFromNode(node);
+      const post = { id, title, subreddit, permalink: canonical(href), url: node.getAttribute?.("content-href") || "", score, numComments, createdUtc, viewCount };
       const existing = postsByKey.get(key);
-      if (!existing || post.score + post.numComments > existing.score + existing.numComments) postsByKey.set(key, post);
+      if (!existing || (post.viewCount ?? -1) > (existing.viewCount ?? -1) || post.score + post.numComments > existing.score + existing.numComments) postsByKey.set(key, post);
     }
   };
   const findScrollTarget = () => {
@@ -799,5 +902,102 @@ async function captureRedditProfileInPage(expectedUsername) {
     profile: { username, followerCount: profileFollowerCount },
     posts: Array.from(postsByKey.values()),
     comments: [],
+  };
+}
+
+async function captureRedditProfileHtmlInPage(expectedUsername) {
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const makeProgressBox = () => {
+    document.getElementById("paidpolitely-capture-progress")?.remove();
+    const box = document.createElement("div");
+    box.id = "paidpolitely-capture-progress";
+    box.style.cssText = "position:fixed;right:18px;bottom:18px;z-index:2147483646;background:#120b16;color:#fff;border:1px solid #ff4f91;border-radius:14px;padding:12px 14px;font:13px system-ui;box-shadow:0 12px 40px rgba(0,0,0,.35);max-width:320px;";
+    document.body.append(box);
+    return (message) => {
+      box.textContent = message;
+    };
+  };
+  const findScrollTarget = () => {
+    const candidates = [document.scrollingElement, document.documentElement, document.body, document.querySelector("main"), ...Array.from(document.querySelectorAll("main, shreddit-app, div, section"))]
+      .filter(Boolean)
+      .filter((element, index, array) => array.indexOf(element) === index)
+      .filter((element) => element.scrollHeight > element.clientHeight + 300)
+      .sort((a, b) => b.scrollHeight - a.scrollHeight);
+    const element = candidates[0] || document.scrollingElement || document.documentElement || document.body;
+    return {
+      element,
+      get top() {
+        return element === document.body || element === document.documentElement || element === document.scrollingElement ? window.scrollY || document.documentElement.scrollTop || document.body.scrollTop || 0 : element.scrollTop;
+      },
+      set top(value) {
+        if (element === document.body || element === document.documentElement || element === document.scrollingElement) window.scrollTo(0, value);
+        else element.scrollTop = value;
+      },
+      get height() {
+        return element.scrollHeight || document.body.scrollHeight;
+      },
+      get clientHeight() {
+        return element === document.body || element === document.documentElement || element === document.scrollingElement ? window.innerHeight : element.clientHeight;
+      },
+      fireScroll() {
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+        window.dispatchEvent(new Event("scroll"));
+      },
+    };
+  };
+  const countPostNodes = () => document.querySelectorAll("shreddit-post, [post-title][permalink], [data-testid='post-container']").length;
+  const username =
+    String(expectedUsername || "") ||
+    location.pathname.match(/\/user\/([^/]+)/i)?.[1] ||
+    location.pathname.match(/\/u\/([^/]+)/i)?.[1] ||
+    document.querySelector('[data-testid="profile-name"]')?.textContent?.replace(/^u\//i, "") ||
+    "";
+  const setProgress = makeProgressBox();
+  const scroller = findScrollTarget();
+  let lastHeight = 0;
+  let lastCount = 0;
+  let unchangedNearBottomPasses = 0;
+
+  try {
+    scroller.top = 0;
+    scroller.fireScroll();
+    await sleep(1200);
+
+    for (let pass = 0; pass < 180 && unchangedNearBottomPasses < 8; pass += 1) {
+      const step = Math.max(550, Math.floor(scroller.clientHeight * 0.65));
+      const beforeTop = scroller.top;
+      const maxTop = Math.max(0, scroller.height - scroller.clientHeight);
+      scroller.top = Math.min(maxTop, beforeTop + step);
+      scroller.fireScroll();
+      window.dispatchEvent(new WheelEvent("wheel", { deltaY: step, bubbles: true, cancelable: true }));
+      await sleep(1100);
+
+      const currentTop = scroller.top;
+      const currentHeight = scroller.height;
+      const count = countPostNodes();
+      const nearBottom = currentTop + scroller.clientHeight >= currentHeight - 900;
+      setProgress("PaidPolitely archiving Reddit profile HTML: " + count + " posts visible, pass " + (pass + 1) + ", " + (nearBottom ? "near bottom" : "scrolling"));
+      if (nearBottom && currentHeight === lastHeight && count === lastCount) unchangedNearBottomPasses += 1;
+      else unchangedNearBottomPasses = 0;
+      if (currentTop === beforeTop && !nearBottom) unchangedNearBottomPasses += 1;
+      lastHeight = currentHeight;
+      lastCount = count;
+    }
+
+    await sleep(900);
+  } finally {
+    document.getElementById("paidpolitely-capture-progress")?.remove();
+  }
+
+  const content = `<!doctype html>\n${document.documentElement ? document.documentElement.outerHTML : ""}`;
+  if (!content || content.length < 100) {
+    return { username, capturedAt: new Date().toISOString(), content: "", postCount: 0, error: "Reddit profile HTML was unexpectedly empty." };
+  }
+
+  return {
+    username,
+    capturedAt: new Date().toISOString(),
+    content,
+    postCount: countPostNodes(),
   };
 }

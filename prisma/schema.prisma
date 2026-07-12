@@ -42,6 +42,7 @@ model User {
   weeklyReports       WeeklyReport[]
   historicalSnapshots HistoricalSnapshot[]
   eventLogs           EventLog[]
+  postSuggestions     PostSuggestion[]
 
   @@map("user")
 }
@@ -137,6 +138,7 @@ model RedditAccount {
   metricSnapshots AccountMetricSnapshot[]
   plannerJobs     PlannerJob[]
   dareCompletions DareCompletion[]
+  postSuggestions PostSuggestion[]
 
   @@unique([ownerUserId, username])
   @@index([ownerUserId])
@@ -352,8 +354,8 @@ model WorkspaceSetting {
   activeAccountId      String?
   timezone             String   @default("Europe/London")
   profileScanInterval  Int      @default(900000)
-  deepDiveInterval     Int      @default(7200000)
-  deepDiveBatchSize    Int      @default(50)
+  deepDiveInterval     Int      @default(3600000)
+  deepDiveBatchSize    Int      @default(500)
   plannerEnabled       Boolean  @default(true)
   plannerModel         String?
   weeklyReportEnabled  Boolean  @default(true)
@@ -372,7 +374,12 @@ model PlannedPost {
   accountId            String?
   subreddit            String
   title                String
+  body                 String?
   format               String   @default("unknown")
+  imageUrl             String?
+  videoUrl             String?
+  flairId              String?
+  flairText            String?
   plannedFor           DateTime?
   status               String   @default("PLANNED")
   expectedScore        Int?
@@ -382,6 +389,8 @@ model PlannedPost {
   linkedPostSnapshotId String?
   rationale            String?
   notes                String?
+  draftSavedAt         DateTime?
+  publishedAt          DateTime?
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -498,6 +507,7 @@ model HistoricalPostObservation {
   score       Int      @default(0)
   numComments Int      @default(0)
   upvoteRatio Float?
+  viewCount   Int?
   observedAt  DateTime
   raw         Json?
 
@@ -507,6 +517,7 @@ model HistoricalPostObservation {
   @@index([ownerUserId, observedAt])
   @@index([redditId, observedAt])
   @@index([subreddit, observedAt])
+  @@index([viewCount])
 }
 
 model HistoricalCommentObservation {
@@ -622,6 +633,42 @@ model PlannerJob {
   @@index([status, lockedAt])
   @@index([accountId, createdAt])
   @@index([scanId])
+}
+
+model PostSuggestion {
+  id            String    @id @default(cuid())
+  ownerUserId   String
+  accountId     String?
+  model         String
+  status        String    @default("QUEUED")
+  requestGroup  String?
+  prompt        String
+  systemPrompt  String
+  context       Json?
+  result        Json?
+  subreddit     String?
+  title         String?
+  body          String?
+  format        String?
+  timing        String?
+  rationale     String?
+  confidence    String?
+  error         String?
+  attempts      Int       @default(0)
+  lockedAt      DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  archivedAt    DateTime?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  owner   User           @relation(fields: [ownerUserId], references: [id], onDelete: Cascade)
+  account RedditAccount? @relation(fields: [accountId], references: [id], onDelete: SetNull)
+
+  @@index([ownerUserId, status, createdAt])
+  @@index([ownerUserId, requestGroup])
+  @@index([accountId, createdAt])
+  @@index([model])
 }
 
 model IdleCrawlTarget {

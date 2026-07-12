@@ -233,7 +233,7 @@ export function DashboardRuntimeProvider({ children }: { children: ReactNode }) 
     if (!saved) return;
 
     setExtensionState("scanning");
-    setExtensionMessage(`Trying a paginated no-tab Reddit scan for u/${normalisedUsername}. If Reddit blocks JSON, PaidPolitely will fall back to a quiet tab.`);
+    setExtensionMessage(`Trying a paginated no-tab Reddit scan for u/${normalisedUsername}. Post views are refreshed by hourly post insights and historical HTML snapshots.`);
 
     try {
       const response = await sendExtensionMessage<ExtensionScanResponse>({
@@ -256,7 +256,7 @@ export function DashboardRuntimeProvider({ children }: { children: ReactNode }) 
       const imported = await importRawPayload(raw);
       setExtensionState("installed");
       window.dispatchEvent(new Event("paidpolitely-account-metrics-refresh"));
-      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}${response.status === "captured_headless" ? " without opening Reddit" : " with quiet tab fallback"}. Profile and deep-dive automation can now continue from the local queue.` : "The extension captured data, but the app could not import it.");
+      setExtensionMessage(imported ? `Captured and imported u/${normalisedUsername}${response.status === "captured_headless" ? " without opening Reddit" : " with a quiet Reddit tab"}. Profile and deep-dive automation can now continue from the local queue.` : "The extension captured data, but the app could not import it.");
     } catch (extensionError) {
       setState("error");
       setExtensionState("missing");

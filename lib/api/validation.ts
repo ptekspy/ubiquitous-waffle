@@ -27,7 +27,7 @@ export type ProductOpsAction =
 const DEFAULT_IMPORT_PAYLOAD_LIMIT_BYTES = 5 * 1024 * 1024;
 const MAX_TEXT_LENGTH = 2_000;
 const MAX_NOTES_LENGTH = 5_000;
-const ALLOWED_PLANNED_STATUSES = new Set(["PLANNED", "POSTED", "SKIPPED", "CANCELLED", "DONE"]);
+const ALLOWED_PLANNED_STATUSES = new Set(["DRAFT", "PLANNED", "POSTED", "SKIPPED", "CANCELLED", "DONE"]);
 
 function payloadLimitBytes(): number {
   const configured = Number.parseInt(process.env.IMPORT_PAYLOAD_LIMIT_BYTES || "", 10);

@@ -3,6 +3,15 @@ importScripts("background.js");
 const originalPaidPolitelyHandleMessage = handleMessage;
 
 handleMessage = async function paidPolitelyHandleMessageWithCrawlers(message, sender) {
+  if (message?.type === "PAIDPOLITELY_FETCH_SUBREDDIT_FLAIRS") {
+    const subreddit = normaliseRedditName(message.subreddit);
+    if (!subreddit) {
+      return { ok: false, status: "bad_subreddit", error: "PaidPolitely needs a valid subreddit name." };
+    }
+
+    return fetchSubredditFlairs(subreddit);
+  }
+
   if (message?.type === "PAIDPOLITELY_DEEP_DIVE_REDDIT_POST") {
     const redditId = normaliseRedditPostId(message.redditId);
     if (!redditId) {
@@ -18,6 +27,41 @@ handleMessage = async function paidPolitelyHandleMessageWithCrawlers(message, se
 
   return originalPaidPolitelyHandleMessage(message, sender);
 };
+
+async function fetchSubredditFlairs(subreddit) {
+  const url = new URL(`https://www.reddit.com/r/${encodeURIComponent(subreddit)}/api/link_flair_v2.json`);
+  url.searchParams.set("raw_json", "1");
+  const result = await fetchRedditJson(url.toString());
+  if (!result.ok) {
+    return {
+      ok: false,
+      status: "flairs_unavailable",
+      error: result.error || "Reddit did not return flair options for this subreddit.",
+    };
+  }
+
+  const rows = Array.isArray(result.data) ? result.data : [];
+  const flairs = rows.map(toSubredditFlairOption).filter(Boolean);
+  return {
+    ok: true,
+    status: "captured_subreddit_flairs",
+    subreddit,
+    flairs,
+  };
+}
+
+function toSubredditFlairOption(row) {
+  const id = String(row?.id || "").trim();
+  if (!id) return null;
+  const text = String(row.text || row.richtext?.map((item) => item?.t || "").join("") || "Untitled flair").trim();
+  return {
+    id,
+    text,
+    editable: Boolean(row.text_editable),
+    textColor: typeof row.text_color === "string" ? row.text_color : null,
+    backgroundColor: typeof row.background_color === "string" ? row.background_color : null,
+  };
+}
 
 function normaliseRedditPostId(value) {
   const id = String(value || "").trim().replace(/^t3_/, "").split(/[/?#]/)[0];
@@ -229,6 +273,8 @@ async function scrapeRedditPostInsights(permalink) {
         visible: Boolean(result?.visible),
         labels: Array.isArray(result?.labels) ? result.labels.slice(0, 80) : [],
         insightText: typeof result?.insightText === "string" ? result.insightText.slice(0, 6000) : "",
+        jsonCandidates: Array.isArray(result?.jsonCandidates) ? result.jsonCandidates.slice(0, 40) : [],
+        resourceUrls: Array.isArray(result?.resourceUrls) ? result.resourceUrls.slice(0, 40) : [],
         error: result?.error || null,
       },
     };
@@ -237,7 +283,7 @@ async function scrapeRedditPostInsights(permalink) {
   }
 }
 
-function scrapePostInsightsInPage() {
+async function scrapePostInsightsInPage() {
   const numberFrom = (value) => {
     const token = String(value ?? "")
       .trim()
@@ -252,6 +298,141 @@ function scrapePostInsightsInPage() {
   };
 
   const compact = (value) => String(value || "").replace(/\s+/g, " ").trim();
+  const jsonCandidates = [];
+  const resourceUrls = [];
+  const output = { viewCount: null, shareCount: null };
+
+  const metricKey = (key) => String(key || "").replace(/[_-]/g, "").toLowerCase();
+  const blockedMetricPath = (path) => /screen|pageview|screenview|impression|viewport|video|media|ad|advert|comment/i.test(path);
+  const metricValue = (value) => {
+    if (typeof value === "number" && Number.isFinite(value)) return Math.max(0, Math.round(value));
+    return numberFrom(value);
+  };
+  const rememberCandidate = (kind, path, value, source) => {
+    const parsed = metricValue(value);
+    if (parsed === null || parsed < 0 || !Number.isFinite(parsed)) return;
+    const joinedPath = path.join(".");
+    if (blockedMetricPath(joinedPath)) return;
+    const key = metricKey(path[path.length - 1]);
+    const surrounding = metricKey(joinedPath);
+    let metric = null;
+    let confidence = 0;
+
+    if (kind === "view") {
+      if (/^(viewcount|views|totalviews|postviews|postviewcount|numviews|uniqueviews)$/.test(key)) confidence = 4;
+      else if (/views/.test(key) && /insight|post|analytics|stats|metrics/.test(surrounding)) confidence = 3;
+      metric = "viewCount";
+    }
+
+    if (kind === "share") {
+      if (/^(sharecount|shares|totalshares|postshares)$/.test(key)) confidence = 4;
+      else if (/shares/.test(key) && /insight|post|analytics|stats|metrics/.test(surrounding)) confidence = 3;
+      metric = "shareCount";
+    }
+
+    if (!metric || confidence === 0) return;
+    jsonCandidates.push({ metric, value: parsed, path: joinedPath.slice(0, 180), source });
+    if (output[metric] === null || confidence >= 4) output[metric] = parsed;
+  };
+  const scanJsonForMetrics = (value, path = [], source = "json", depth = 0, seen = new Set()) => {
+    if (!value || depth > 9) return;
+    if (typeof value === "object") {
+      if (seen.has(value)) return;
+      seen.add(value);
+    }
+
+    if (Array.isArray(value)) {
+      value.slice(0, 250).forEach((entry, index) => scanJsonForMetrics(entry, [...path, String(index)], source, depth + 1, seen));
+      return;
+    }
+
+    if (typeof value !== "object") return;
+
+    const object = value;
+    for (const [key, entry] of Object.entries(object)) {
+      const nextPath = [...path, key];
+      const normalKey = metricKey(key);
+      if (/view/.test(normalKey)) rememberCandidate("view", nextPath, entry, source);
+      if (/share/.test(normalKey)) rememberCandidate("share", nextPath, entry, source);
+
+      if ((normalKey === "label" || normalKey === "name" || normalKey === "title") && /views?/i.test(String(entry || ""))) {
+        rememberCandidate("view", [...path, "value"], object.value ?? object.count ?? object.total ?? object.metric, source);
+      }
+      if ((normalKey === "label" || normalKey === "name" || normalKey === "title") && /shares?/i.test(String(entry || ""))) {
+        rememberCandidate("share", [...path, "value"], object.value ?? object.count ?? object.total ?? object.metric, source);
+      }
+
+      if (entry && typeof entry === "object") scanJsonForMetrics(entry, nextPath, source, depth + 1, seen);
+    }
+  };
+  const parseJsonish = (raw) => {
+    const text = String(raw || "").trim();
+    if (!text || text.length > 2000000) return null;
+    try {
+      return JSON.parse(text);
+    } catch {
+      return null;
+    }
+  };
+  const jsonFromScripts = () => {
+    const roots = [];
+    for (const script of Array.from(document.querySelectorAll("script"))) {
+      const raw = script.textContent || "";
+      if (!/view|share|insight|stats|metric/i.test(raw)) continue;
+      const parsed = parseJsonish(raw);
+      if (parsed) roots.push({ source: `script:${script.id || script.type || "json"}`, value: parsed });
+    }
+    return roots.slice(0, 20);
+  };
+  const sameOriginResourceUrls = () => {
+    const urls = new Set();
+    for (const entry of performance.getEntriesByType?.("resource") || []) {
+      const url = String(entry.name || "");
+      if (!url || urls.has(url)) continue;
+      if (!/^https:\/\/(www\.)?reddit\.com\//i.test(url)) continue;
+      if (!/insight|metric|stats|post|shreddit|svc|gql|graphql|comments/i.test(url)) continue;
+      urls.add(url);
+    }
+    return Array.from(urls).slice(0, 20);
+  };
+  const scanFetchedJsonResources = async () => {
+    for (const url of sameOriginResourceUrls()) {
+      resourceUrls.push(url);
+      try {
+        const response = await fetch(url, { credentials: "include", cache: "no-store" });
+        const text = await response.text();
+        const parsed = parseJsonish(text);
+        if (parsed) scanJsonForMetrics(parsed, ["resource"], url);
+        else if (/views?|shares?/i.test(text)) scanTextForMetrics(compact(text), "reddit-resource-text");
+      } catch {
+        // Resource replay is best-effort; visible text remains the fallback.
+      }
+      if (output.viewCount !== null && output.shareCount !== null) break;
+    }
+  };
+  const scanTextForMetrics = (searchText, source) => {
+    const patterns = [
+      { key: "viewCount", regexes: [/(\d[\d,.]*\s*[kmb]?)\s+(?:total\s+)?views?/i, /(?:total\s+)?views?\s+(\d[\d,.]*\s*[kmb]?)/i, /post\s+views?\s+(\d[\d,.]*\s*[kmb]?)/i] },
+      { key: "shareCount", regexes: [/(\d[\d,.]*\s*[kmb]?)\s+shares?/i, /shares?\s+(\d[\d,.]*\s*[kmb]?)/i] },
+    ];
+
+    for (const pattern of patterns) {
+      if (output[pattern.key] !== null) continue;
+      for (const regex of pattern.regexes) {
+        const match = searchText.match(regex);
+        const value = match ? numberFrom(match[1]) : null;
+        if (value !== null) {
+          output[pattern.key] = value;
+          jsonCandidates.push({ metric: pattern.key, value, path: "text", source });
+          break;
+        }
+      }
+    }
+  };
+
+  for (const root of jsonFromScripts()) scanJsonForMetrics(root.value, ["script"], root.source);
+  if (output.viewCount === null || output.shareCount === null) await scanFetchedJsonResources();
+
   const bodyText = compact(document.body?.innerText || "");
   const lower = bodyText.toLowerCase();
 
@@ -265,23 +446,7 @@ function scrapePostInsightsInPage() {
   const searchText = insightText || bodyText;
   const labels = searchText.split(/\n| • | \| /).map(compact).filter(Boolean).slice(0, 100);
 
-  const patterns = [
-    { key: "viewCount", regexes: [/(\d[\d,.]*\s*[kmb]?)\s+(?:total\s+)?views?/i, /(?:total\s+)?views?\s+(\d[\d,.]*\s*[kmb]?)/i, /post\s+views?\s+(\d[\d,.]*\s*[kmb]?)/i] },
-    { key: "shareCount", regexes: [/(\d[\d,.]*\s*[kmb]?)\s+shares?/i, /shares?\s+(\d[\d,.]*\s*[kmb]?)/i] },
-  ];
-
-  const output = { viewCount: null, shareCount: null };
-
-  for (const pattern of patterns) {
-    for (const regex of pattern.regexes) {
-      const match = searchText.match(regex);
-      const value = match ? numberFrom(match[1]) : null;
-      if (value !== null) {
-        output[pattern.key] = value;
-        break;
-      }
-    }
-  }
+  scanTextForMetrics(searchText, "reddit-post-page-text");
 
   const allTextNodes = [...document.querySelectorAll("span, p, div, h1, h2, h3, h4")]
     .map((node) => compact(node.innerText || node.getAttribute("aria-label") || node.getAttribute("title") || ""))
@@ -299,10 +464,12 @@ function scrapePostInsightsInPage() {
   return {
     ...output,
     visible: /views?|post insights?|insights?|upvote rate|shares?/i.test(lower),
-    source: "reddit-post-page",
+    source: jsonCandidates.some((candidate) => candidate.source !== "reddit-post-page-text") ? "reddit-post-insights-json" : "reddit-post-page",
     labels,
     insightText,
-    error: output.viewCount === null && output.shareCount === null ? "No visible view/share insight values were found on the post page." : null,
+    jsonCandidates,
+    resourceUrls,
+    error: output.viewCount === null && output.shareCount === null ? "No visible view/share insight values were found in post insights JSON or on the post page." : null,
   };
 }
 

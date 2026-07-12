@@ -9,7 +9,18 @@ export type PaidPolitelyScanProfileMessage = {
   openInBackground?: boolean;
 };
 
-export type PaidPolitelyExtensionMessage = PaidPolitelyPingMessage | PaidPolitelyScanProfileMessage;
+export type PaidPolitelyCaptureProfileHtmlMessage = {
+  type: "PAIDPOLITELY_CAPTURE_REDDIT_PROFILE_HTML";
+  username: string;
+  openInBackground?: boolean;
+};
+
+export type PaidPolitelyFetchSubredditFlairsMessage = {
+  type: "PAIDPOLITELY_FETCH_SUBREDDIT_FLAIRS";
+  subreddit: string;
+};
+
+export type PaidPolitelyExtensionMessage = PaidPolitelyPingMessage | PaidPolitelyScanProfileMessage | PaidPolitelyCaptureProfileHtmlMessage | PaidPolitelyFetchSubredditFlairsMessage;
 
 export type PaidPolitelyExtensionErrorStatus =
   | "bad_request"
@@ -21,11 +32,12 @@ export type PaidPolitelyExtensionErrorStatus =
   | "cancelled"
   | "empty_capture"
   | "profile_unavailable"
+  | "flairs_unavailable"
   | "unknown_error";
 
 export type PaidPolitelyExtensionSuccess = {
   ok: true;
-  status: "installed" | "captured" | "captured_headless";
+  status: "installed" | "captured" | "captured_headless" | "captured_profile_html" | "captured_subreddit_flairs";
   version?: string;
   name?: string;
   bridge?: "runtime" | "content-script";

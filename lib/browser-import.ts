@@ -10,6 +10,9 @@ type BrowserImportPost = {
   score?: unknown;
   numComments?: unknown;
   postHint?: unknown;
+  viewCount?: unknown;
+  views?: unknown;
+  latestViews?: unknown;
 };
 
 type BrowserImportComment = {
@@ -204,6 +207,7 @@ function toPost(raw: BrowserImportPost, index: number, username: string): Reddit
     isSelf: false,
     domain: null,
     postHint: asString(raw.postHint) || null,
+    viewCount: asNullableNumber(raw.viewCount ?? raw.views ?? raw.latestViews),
   };
 }
 
