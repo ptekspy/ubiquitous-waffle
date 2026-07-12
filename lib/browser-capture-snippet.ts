@@ -3,11 +3,36 @@ export const BROWSER_CAPTURE_SNIPPET = `(async () => {
   const text = (node) => node?.textContent?.trim() ?? "";
   const numberFrom = (value) => {
     const raw = String(value ?? "").trim().toLowerCase().replace(/,/g, "");
-    const match = raw.match(/-?\\d+(?:\\.\\d+)?\\s*[km]?/);
+    const match = raw.match(/-?\\d+(?:\\.\\d+)?\\s*[kmb]?/);
     if (!match) return 0;
     const token = match[0].replace(/\\s/g, "");
-    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : 1;
+    const multiplier = token.endsWith("k") ? 1000 : token.endsWith("m") ? 1000000 : token.endsWith("b") ? 1000000000 : 1;
     return Math.round(parseFloat(token) * multiplier);
+  };
+  const nullableNumberFrom = (value) => {
+    const raw = String(value ?? "").trim();
+    if (!raw) return null;
+    const parsed = numberFrom(raw);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+  const viewCountFromNode = (node) => {
+    const attrs = ["view-count", "views", "total-views", "post-view-count"];
+    for (const attr of attrs) {
+      const value = node.getAttribute?.(attr);
+      if (value) return nullableNumberFrom(value);
+    }
+    const labels = [
+      node.getAttribute?.("aria-label"),
+      node.getAttribute?.("title"),
+      ...Array.from(node.querySelectorAll?.("[aria-label], [title]") || []).map((child) => child.getAttribute("aria-label") || child.getAttribute("title") || ""),
+      node.innerText || node.textContent || "",
+    ];
+    for (const label of labels) {
+      const match = String(label || "").match(/(\\d[\\d,.]*\\s*[kmb]?)\\s+(?:total\\s+)?views?|(?:total\\s+)?views?\\s+(\\d[\\d,.]*\\s*[kmb]?)/i);
+      const value = match ? nullableNumberFrom(match[1] || match[2]) : null;
+      if (value !== null) return value;
+    }
+    return null;
   };
   const redditIdFromHref = (href) => href?.match(/\\/comments\\/([^/]+)\\//i)?.[1] ?? "";
   const subredditFromHref = (href) => href?.match(/\\/r\\/([^/]+)\\//i)?.[1] ?? "";
@@ -59,9 +84,10 @@ export const BROWSER_CAPTURE_SNIPPET = `(async () => {
       const createdUtc = Number.isFinite(createdParsed) ? Math.floor(createdParsed / 1000) : Math.floor(Date.now() / 1000);
       if (!title || !subreddit || !href) continue;
       const key = idFromHref || id || href;
-      const post = { id, title, subreddit, permalink: href, score, numComments, createdUtc };
+      const viewCount = viewCountFromNode(node);
+      const post = { id, title, subreddit, permalink: href, score, numComments, createdUtc, viewCount };
       const existing = postsByKey.get(key);
-      if (!existing || post.score + post.numComments > existing.score + existing.numComments) {
+      if (!existing || (post.viewCount ?? -1) > (existing.viewCount ?? -1) || post.score + post.numComments > existing.score + existing.numComments) {
         postsByKey.set(key, post);
       }
     }

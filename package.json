@@ -27,6 +27,7 @@
     "@tanstack/react-query": "^5.90.12",
     "better-auth": "^1.6.0",
     "next": "^16.2.0",
+    "ollama": "^0.6.3",
     "pg": "^8.16.3",
     "react": "^19.2.7",
     "react-dom": "^19.2.7"

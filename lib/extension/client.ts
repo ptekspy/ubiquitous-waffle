@@ -26,6 +26,16 @@ function getChromeRuntime(): ChromeRuntime | undefined {
   return (window as WindowWithChromeRuntime).chrome?.runtime;
 }
 
+const MESSAGE_CHANNEL_CLOSED_PATTERN = /message channel closed|receiving end does not exist|extension context invalidated/i;
+
+function toExtensionMessageError(message: string): Error {
+  if (MESSAGE_CHANNEL_CLOSED_PATTERN.test(message)) {
+    return new Error("PaidPolitely Capture stopped replying before the browser work finished. Reload the extension if this keeps happening.");
+  }
+
+  return new Error(message);
+}
+
 function sendBridgeMessage<TResponse>(message: ExtensionMessage, timeoutMs = 2200): Promise<TResponse> {
   return new Promise((resolve, reject) => {
     const requestId = createRequestId();
@@ -56,7 +66,7 @@ function sendBridgeMessage<TResponse>(message: ExtensionMessage, timeoutMs = 220
   });
 }
 
-function sendDirectExtensionMessage<TResponse>(message: ExtensionMessage): Promise<TResponse> {
+function sendDirectExtensionMessage<TResponse>(message: ExtensionMessage, timeoutMs = 2200): Promise<TResponse> {
   return new Promise((resolve, reject) => {
     if (!EXTENSION_ID) {
       reject(new Error("No extension ID fallback is configured."));
@@ -69,10 +79,15 @@ function sendDirectExtensionMessage<TResponse>(message: ExtensionMessage): Promi
       return;
     }
 
+    const timeout = window.setTimeout(() => {
+      reject(new Error("PaidPolitely Capture did not answer before the request timed out. Reload the extension if this keeps happening."));
+    }, timeoutMs);
+
     runtime.sendMessage(EXTENSION_ID, message, (response) => {
+      window.clearTimeout(timeout);
       const lastError = getChromeRuntime()?.lastError;
       if (lastError?.message) {
-        reject(new Error(lastError.message));
+        reject(toExtensionMessageError(lastError.message));
         return;
       }
 
@@ -81,11 +96,11 @@ function sendDirectExtensionMessage<TResponse>(message: ExtensionMessage): Promi
   });
 }
 
-export async function sendExtensionMessage<TResponse>(message: ExtensionMessage): Promise<TResponse> {
+export async function sendExtensionMessage<TResponse>(message: ExtensionMessage, timeoutMs?: number): Promise<TResponse> {
   try {
-    return await sendBridgeMessage<TResponse>(message);
+    return await sendBridgeMessage<TResponse>(message, timeoutMs);
   } catch (bridgeError) {
     if (!EXTENSION_ID) throw bridgeError;
-    return sendDirectExtensionMessage<TResponse>(message);
+    return sendDirectExtensionMessage<TResponse>(message, timeoutMs);
   }
 }

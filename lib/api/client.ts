@@ -87,6 +87,19 @@ export type BrowserCrawlerImportResult =
       error: string;
     };
 
+export type HistoricalSnapshotImportResult =
+  | {
+      ok: true;
+      snapshotId: string;
+      postCount: number;
+      commentCount: number;
+      viewObservationCount?: number;
+    }
+  | {
+      ok: false;
+      error: string;
+    };
+
 export type IdleCrawlerTarget = {
   id: string;
   kind: "SUBREDDIT_FEED" | "HOME_FEED" | "USER_PROFILE";
@@ -321,6 +334,45 @@ export async function importBrowserPayload(raw: string, options: ImportBrowserPa
     return { ok: true, data: payload };
   } catch {
     return { ok: false, error: "The browser import request failed before the API could respond." };
+  }
+}
+
+function londonDateTimeParts(value: string): { date: string; time: string } {
+  const date = new Date(value);
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Europe/London",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+    hourCycle: "h23",
+  });
+  const parts = Object.fromEntries(formatter.formatToParts(date).filter((part) => part.type !== "literal").map((part) => [part.type, part.value]));
+  return {
+    date: `${parts.year}-${parts.month}-${parts.day}`,
+    time: `${parts.hour}:${parts.minute}`,
+  };
+}
+
+export async function importHistoricalSnapshotPayload(input: { username: string; content: string; capturedAt: string; sourceFileName?: string | null }): Promise<HistoricalSnapshotImportResult> {
+  try {
+    const { date, time } = londonDateTimeParts(input.capturedAt);
+    const form = new FormData();
+    form.set("capturedDate", date);
+    form.set("capturedTime", time);
+    form.set("timezone", "Europe/London");
+    form.set("username", input.username);
+    form.set("content", input.content);
+    if (input.sourceFileName) form.set("sourceFileName", input.sourceFileName);
+
+    const response = await fetch("/api/history/snapshots/import", { method: "POST", body: form });
+    const payload = await readJsonResponse<{ snapshotId: string; postCount: number; commentCount: number; viewObservationCount?: number }, ApiError>(response, JSON_FALLBACK_ERROR);
+
+    if (isApiError(payload)) return { ok: false, error: payload.error };
+    return { ok: true, ...payload };
+  } catch {
+    return { ok: false, error: "The historical snapshot import failed before the API could respond." };
   }
 }
 

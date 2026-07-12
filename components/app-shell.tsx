@@ -23,6 +23,7 @@ const navigationGroups: NavigationGroup[] = [
     items: [
       { label: "Changes", href: "#intelligence" },
       { label: "Trends", href: "#trends" },
+      { label: "Suggestions", href: "/dashboard/suggestions", badge: "new" },
       { label: "Post Insights", href: "#post-insights", badge: "new" },
       { label: "Subreddits", href: "#subreddits" },
       { label: "Posts", href: "#posts" },
@@ -33,6 +34,7 @@ const navigationGroups: NavigationGroup[] = [
     label: "Planning",
     items: [
       { label: "Planner", href: "#planner" },
+      { label: "Scheduler", href: "/dashboard/scheduler", badge: "new" },
       { label: "Dares", href: "#dares" },
       { label: "Advanced Tools", href: "#advanced-tools" },
     ],

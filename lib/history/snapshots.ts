@@ -20,6 +20,9 @@ export type SnapshotImportResult = {
   sourceFileName: string | null;
   postCount: number;
   commentCount: number;
+  postViewCount: number;
+  commentViewCount: number;
+  viewObservationCount: number;
   username: string | null;
   accountMetricImported: boolean;
   profileMetrics: ParsedProfileMetrics;
@@ -34,10 +37,15 @@ export type FolderSnapshotImportResult = {
   imported: SnapshotImportResult[];
 };
 
-export type ReparseFollowerResult = {
+export type ReparseHistoricalSnapshotResult = {
   snapshotsChecked: number;
   snapshotsReparsed: number;
   followerSnapshotsImported: number;
+  postObservationsImported: number;
+  commentObservationsImported: number;
+  postViewObservationsImported: number;
+  commentViewObservationsImported: number;
+  viewObservationsImported: number;
   skippedWithoutStoredContent: number;
   skippedWithoutFollowers: number;
   zeroMetricSnapshotsDeleted: number;
@@ -230,7 +238,7 @@ function folderImportDirectory(directory?: string | null): string {
   return resolve(process.cwd(), configured);
 }
 
-async function cleanupZeroFollowerCounts(ownerUserId: string): Promise<Pick<ReparseFollowerResult, "zeroMetricSnapshotsDeleted" | "zeroAccountFollowersCleared">> {
+async function cleanupZeroFollowerCounts(ownerUserId: string): Promise<Pick<ReparseHistoricalSnapshotResult, "zeroMetricSnapshotsDeleted" | "zeroAccountFollowersCleared">> {
   const deletedMetricRows = await prisma.$queryRaw<CountRow[]>`
     WITH deleted AS (
       DELETE FROM "AccountMetricSnapshot" metric
@@ -428,10 +436,10 @@ async function insertPost(snapshotId: string, ownerUserId: string, accountId: st
   await prisma.$executeRaw`
     INSERT INTO "HistoricalPostObservation" (
       "id", "snapshotId", "ownerUserId", "accountId", "redditId", "title", "subreddit", "permalink",
-      "createdUtc", "score", "numComments", "upvoteRatio", "observedAt", "raw"
+      "createdUtc", "score", "numComments", "upvoteRatio", "viewCount", "observedAt", "raw"
     ) VALUES (
       ${randomUUID()}, ${snapshotId}, ${ownerUserId}, ${accountId}, ${post.redditId}, ${post.title}, ${post.subreddit}, ${post.permalink},
-      ${post.createdUtc}, ${post.score}, ${post.numComments}, ${post.upvoteRatio}, ${observedAt}, ${post.raw ?? {}}
+      ${post.createdUtc}, ${post.score}, ${post.numComments}, ${post.upvoteRatio}, ${post.viewCount}, ${observedAt}, ${post.raw ?? {}}
     )
     ON CONFLICT ("snapshotId", "redditId") DO UPDATE SET
       "title" = EXCLUDED."title",
@@ -441,6 +449,7 @@ async function insertPost(snapshotId: string, ownerUserId: string, accountId: st
       "score" = EXCLUDED."score",
       "numComments" = EXCLUDED."numComments",
       "upvoteRatio" = EXCLUDED."upvoteRatio",
+      "viewCount" = EXCLUDED."viewCount",
       "raw" = EXCLUDED."raw"
   `;
 }
@@ -464,6 +473,27 @@ async function insertComment(snapshotId: string, ownerUserId: string, accountId:
       "viewCount" = EXCLUDED."viewCount",
       "raw" = EXCLUDED."raw"
   `;
+}
+
+async function replaceSnapshotObservations(snapshotId: string, ownerUserId: string, accountId: string | null, observedAt: Date, posts: ParsedHistoricalPost[], comments: ParsedHistoricalComment[]): Promise<void> {
+  await prisma.$executeRaw`DELETE FROM "HistoricalPostObservation" WHERE "snapshotId" = ${snapshotId}`;
+  await prisma.$executeRaw`DELETE FROM "HistoricalCommentObservation" WHERE "snapshotId" = ${snapshotId}`;
+
+  for (const post of posts) {
+    await insertPost(snapshotId, ownerUserId, accountId, observedAt, post);
+  }
+
+  for (const comment of comments) {
+    await insertComment(snapshotId, ownerUserId, accountId, observedAt, comment);
+  }
+}
+
+function postViewCount(posts: ParsedHistoricalPost[]): number {
+  return posts.filter((post) => post.viewCount !== null).length;
+}
+
+function commentViewCount(comments: ParsedHistoricalComment[]): number {
+  return comments.filter((comment) => comment.viewCount !== null).length;
 }
 
 export async function importHistoricalSnapshot(input: SnapshotImportInput): Promise<SnapshotImportResult> {
@@ -500,16 +530,10 @@ export async function importHistoricalSnapshot(input: SnapshotImportInput): Prom
       "importedAt" = CURRENT_TIMESTAMP
   `;
 
-  await prisma.$executeRaw`DELETE FROM "HistoricalPostObservation" WHERE "snapshotId" = ${snapshotId}`;
-  await prisma.$executeRaw`DELETE FROM "HistoricalCommentObservation" WHERE "snapshotId" = ${snapshotId}`;
+  await replaceSnapshotObservations(snapshotId, input.ownerUserId, accountId, input.capturedAt, parsed.posts, parsed.comments);
 
-  for (const post of parsed.posts) {
-    await insertPost(snapshotId, input.ownerUserId, accountId, input.capturedAt, post);
-  }
-
-  for (const comment of parsed.comments) {
-    await insertComment(snapshotId, input.ownerUserId, accountId, input.capturedAt, comment);
-  }
+  const parsedPostViewCount = postViewCount(parsed.posts);
+  const parsedCommentViewCount = commentViewCount(parsed.comments);
 
   return {
     snapshotId,
@@ -518,6 +542,9 @@ export async function importHistoricalSnapshot(input: SnapshotImportInput): Prom
     sourceFileName,
     postCount: parsed.posts.length,
     commentCount: parsed.comments.length,
+    postViewCount: parsedPostViewCount,
+    commentViewCount: parsedCommentViewCount,
+    viewObservationCount: parsedPostViewCount + parsedCommentViewCount,
     username,
     accountMetricImported,
     profileMetrics,
@@ -568,7 +595,7 @@ export async function importHistoricalSnapshotsFromFolder(input: { ownerUserId: 
   };
 }
 
-export async function reparseHistoricalSnapshotFollowers(ownerUserId: string): Promise<ReparseFollowerResult> {
+export async function reparseHistoricalSnapshots(ownerUserId: string): Promise<ReparseHistoricalSnapshotResult> {
   const cleanup = await cleanupZeroFollowerCounts(ownerUserId);
   const rows = await prisma.$queryRaw<SnapshotForReparseRow[]>`
     SELECT "id", "accountId", "capturedAt", "metadata"
@@ -581,19 +608,33 @@ export async function reparseHistoricalSnapshotFollowers(ownerUserId: string): P
   let followerSnapshotsImported = 0;
   let skippedWithoutStoredContent = 0;
   let skippedWithoutFollowers = 0;
+  let postObservationsImported = 0;
+  let commentObservationsImported = 0;
+  let postViewObservationsImported = 0;
+  let commentViewObservationsImported = 0;
 
   for (const row of rows) {
     const rawContent = storedRawContent(row.metadata);
     let metrics: ParsedProfileMetrics | null = null;
+    let accountId = row.accountId;
 
     if (rawContent) {
       snapshotsReparsed += 1;
       const parsed = parseHistoricalSnapshotContent(rawContent);
       metrics = normaliseProfileMetrics(parsed.profileMetrics, parsed.username, rawContent);
       const metadata = metadataWithImportContent(parsed.metadata, rawContent, metrics);
+      const account = row.accountId ? await accountById(row.accountId) : await findOrCreateAccount(ownerUserId, metrics.username, metrics);
+      accountId = account?.id ?? row.accountId;
+
+      await replaceSnapshotObservations(row.id, ownerUserId, accountId, row.capturedAt, parsed.posts, parsed.comments);
+      postObservationsImported += parsed.posts.length;
+      commentObservationsImported += parsed.comments.length;
+      postViewObservationsImported += postViewCount(parsed.posts);
+      commentViewObservationsImported += commentViewCount(parsed.comments);
+
       await prisma.$executeRaw`
         UPDATE "HistoricalSnapshot"
-        SET "metadata" = ${metadata}, "importedAt" = CURRENT_TIMESTAMP
+        SET "accountId" = ${accountId}, "metadata" = ${metadata}, "postCount" = ${parsed.posts.length}, "commentCount" = ${parsed.comments.length}, "importedAt" = CURRENT_TIMESTAMP
         WHERE "id" = ${row.id}
       `;
     } else {
@@ -606,7 +647,7 @@ export async function reparseHistoricalSnapshotFollowers(ownerUserId: string): P
       continue;
     }
 
-    const account = row.accountId ? await accountById(row.accountId) : await findOrCreateAccount(ownerUserId, metrics.username, metrics);
+    const account = accountId ? await accountById(accountId) : await findOrCreateAccount(ownerUserId, metrics.username, metrics);
     if (!account) continue;
 
     await upsertImportedAccountMetric(account, row.capturedAt, metrics);
@@ -617,6 +658,11 @@ export async function reparseHistoricalSnapshotFollowers(ownerUserId: string): P
     snapshotsChecked: rows.length,
     snapshotsReparsed,
     followerSnapshotsImported,
+    postObservationsImported,
+    commentObservationsImported,
+    postViewObservationsImported,
+    commentViewObservationsImported,
+    viewObservationsImported: postViewObservationsImported + commentViewObservationsImported,
     skippedWithoutStoredContent,
     skippedWithoutFollowers,
     ...cleanup,

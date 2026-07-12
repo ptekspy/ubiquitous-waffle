@@ -29,6 +29,7 @@ export type RedditPost = {
   isSelf: boolean;
   domain: string | null;
   postHint: string | null;
+  viewCount?: number | null;
 };
 
 export type RedditComment = {
@@ -113,10 +114,14 @@ export type AccountMetricEvent = {
   label: string;
   detail: string;
   value?: number | null;
+  subreddit?: string | null;
+  permalink?: string | null;
+  comments?: number | null;
+  views?: number | null;
 };
 
 export type AccountMetricHistory = {
-  window: "hour" | "day" | "week" | "all";
+  window: "hour" | "day" | "week" | "all" | "custom";
   points: AccountMetricPoint[];
   events?: AccountMetricEvent[];
 };
@@ -247,6 +252,80 @@ export type DashboardInsightsResponse = {
   subredditRoi: SubredditRoiRow[];
   heatmap: PostingHeatmapCell[];
   events: AccountMetricEvent[];
+};
+
+export type SuggestionStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";
+
+export type OllamaModelOption = {
+  name: string;
+  parameterSize: string | null;
+  quantization: string | null;
+  sizeGb: number | null;
+  contextLength: number | null;
+  capabilities: string[];
+  recommended: boolean;
+  reason: string;
+};
+
+export type PostSuggestionSummary = {
+  id: string;
+  status: SuggestionStatus;
+  model: string;
+  requestGroup: string | null;
+  subreddit: string | null;
+  title: string | null;
+  body: string | null;
+  format: string | null;
+  timing: string | null;
+  rationale: string | null;
+  confidence: string | null;
+  error: string | null;
+  result: JsonObject | null;
+  createdAt: string;
+  updatedAt: string;
+  startedAt: string | null;
+  completedAt: string | null;
+};
+
+export type SuggestionsResponse = {
+  generatedAt: string;
+  defaultModel: string | null;
+  models: OllamaModelOption[];
+  suggestions: PostSuggestionSummary[];
+};
+
+export type ScheduledDraftSummary = {
+  id: string;
+  community: string;
+  title: string;
+  body: string | null;
+  format: string;
+  imageUrl: string | null;
+  videoUrl: string | null;
+  flairId: string | null;
+  flairText: string | null;
+  plannedFor: string | null;
+  status: string;
+  notes: string | null;
+  draftSavedAt: string | null;
+  publishedAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type SchedulerResponse = {
+  generatedAt: string;
+  defaultCommunity: string;
+  communities: string[];
+  drafts: ScheduledDraftSummary[];
+};
+
+export type SubredditFlairOption = {
+  id: string;
+  text: string;
+  editable: boolean;
+  textColor: string | null;
+  backgroundColor: string | null;
 };
 
 export type PlannerJobStatus = "QUEUED" | "RUNNING" | "COMPLETED" | "FAILED";

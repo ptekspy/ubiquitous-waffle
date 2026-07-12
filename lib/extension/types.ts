@@ -27,6 +27,42 @@ export type ExtensionScanResponse =
       error: string;
     };
 
+export type ExtensionProfileHtmlSnapshotResponse =
+  | {
+      ok: true;
+      status: "captured_profile_html";
+      payload: {
+        username: string;
+        capturedAt: string;
+        content: string;
+        postCount: number;
+      };
+    }
+  | {
+      ok: false;
+      status?: string;
+      error: string;
+    };
+
+export type ExtensionSubredditFlairsResponse =
+  | {
+      ok: true;
+      status: "captured_subreddit_flairs";
+      subreddit: string;
+      flairs: Array<{
+        id: string;
+        text: string;
+        editable: boolean;
+        textColor: string | null;
+        backgroundColor: string | null;
+      }>;
+    }
+  | {
+      ok: false;
+      status?: string;
+      error: string;
+    };
+
 export type ExtensionMessage =
   | {
       type: "PAIDPOLITELY_PING";
@@ -36,6 +72,15 @@ export type ExtensionMessage =
       username: string;
       preferHeadless?: boolean;
       openInBackground?: boolean;
+    }
+  | {
+      type: "PAIDPOLITELY_CAPTURE_REDDIT_PROFILE_HTML";
+      username: string;
+      openInBackground?: boolean;
+    }
+  | {
+      type: "PAIDPOLITELY_FETCH_SUBREDDIT_FLAIRS";
+      subreddit: string;
     };
 
 export type ChromeRuntime = {
